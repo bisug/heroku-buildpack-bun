@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="https://bun.sh/logo.svg" alt="Bun" height="120">
+</p>
+
 # heroku-buildpack-bun
 
 Heroku buildpack for [Bun.js](https://bun.sh/) — allows you to run Bun on Heroku.
@@ -52,9 +56,9 @@ Pin a specific Bun version using **one** of the following methods (listed in pri
 | Heroku Config Var `BUN_VERSION` | `heroku config:set BUN_VERSION=1.3.13` |
 | `.bun-version` file in project root | `1.3.13` or `v1.3.13` |
 | `runtime.bun.txt` file in project root | `1.3.13` |
-| `runtime.txt` file (bare version only) | `1.3.13` |
+| `runtime.txt` file | `1.3.13` (No `v` prefix allowed) |
 
-The version can be specified with or without a leading `v`, e.g. `v1.3.13` or `1.3.13`. Any [Bun release tag](https://github.com/oven-sh/bun/releases) is valid.
+The version can be specified with or without a leading `v`, e.g. `v1.3.13` or `1.3.13` (except for `runtime.txt` which requires a bare version). Any [Bun release tag](https://github.com/oven-sh/bun/releases) is valid.
 
 > **Note:** Avoid using `runtime.txt` if you have other buildpacks (e.g. Ruby or Python) that also use `runtime.txt` for their own version pinning. Use `.bun-version` or `BUN_VERSION` instead.
 
@@ -89,6 +93,10 @@ const server = Bun.serve({
 
 console.log(`Listening on port ${server.port}`)
 ```
+
+## Contributing
+
+Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for details on how to set up your environment, run the tests, and submit a pull request.
 
 ## Potential issues
 

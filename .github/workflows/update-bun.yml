@@ -25,6 +25,11 @@ jobs:
           # Robustly extract just the semantic version number (e.g., 1.3.13) regardless of prefix
           LATEST_VERSION=$(echo "$LATEST_TAG" | grep -oE "[0-9]+\.[0-9]+\.[0-9]+" | head -n 1)
           
+          if [ -z "$LATEST_VERSION" ]; then
+            echo "::error::Failed to fetch latest Bun version from GitHub API"
+            exit 1
+          fi
+          
           echo "latest_version=$LATEST_VERSION" >> $GITHUB_OUTPUT
           echo "Found latest Bun version: $LATEST_VERSION"
 
@@ -49,9 +54,9 @@ jobs:
           
           echo "Updating examples from $CURRENT_VERSION to $LATEST_VERSION..."
           
-          # Replace the exact current version with the latest version across the files
-          sed -i "s/$CURRENT_VERSION/$LATEST_VERSION/g" README.md
-          sed -i "s/v$CURRENT_VERSION/v$LATEST_VERSION/g" bin/test
+          # Replace version references using word boundaries to avoid corrupting prose
+          sed -i "s/\b$CURRENT_VERSION\b/$LATEST_VERSION/g" README.md
+          sed -i "s/\bv$CURRENT_VERSION\b/v$LATEST_VERSION/g" bin/test
           
           echo "changed=true" >> $GITHUB_OUTPUT
 

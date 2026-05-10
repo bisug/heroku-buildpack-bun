@@ -1,0 +1,16 @@
+# Editor directories and files
+.idea
+.vscode
+*.swp
+*.swo
+
+# OS metadata
+.DS_Store
+Thumbs.db
+
+# Temp files
+*.tmp
+*.log
+
+# Node (just in case you add JS tooling later like Prettier/ESLint)
+node_modules/

@@ -9,8 +9,7 @@ read_json() {
     # -c = print on only one line
     # -M = strip any color
     # --raw-output = write string results directly to stdout (no JSON quoting)
-    # shellcheck disable=SC2002
-    cat "$file" | jq -c -M --raw-output "$key // \"\"" || return 1
+    jq -c -M --raw-output "$key // \"\"" "$file" || return 1
   else
     echo ""
   fi
@@ -21,8 +20,8 @@ has_script() {
   local key="$2"
 
   if test -f "$file"; then
-    # shellcheck disable=SC2002
-    cat "$file" | jq ".[\"scripts\"] | has(\"$key\")"
+    # Use --arg to safely bind $key, preventing jq filter injection
+    jq --arg key "$key" '.scripts | has($key)' "$file"
   else
     echo "false"
   fi
@@ -30,8 +29,7 @@ has_script() {
 
 is_invalid_json_file() {
   local file="$1"
-  # shellcheck disable=SC2002
-  if ! cat "$file" | jq "." 1>/dev/null 2>&1; then
+  if ! jq "." "$file" 1>/dev/null 2>&1; then
     echo "true"
   else
     echo "false"

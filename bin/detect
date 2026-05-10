@@ -40,10 +40,16 @@ if [ -f "$BUILD_DIR/package.json" ]; then
   fi
 
   # engines.bun field present (e.g. "engines": { "bun": ">=1.0.0" })
-  # Uses a context-aware grep to avoid matching strings outside engines block
-  if grep -A 10 '"engines"' "$BUILD_DIR/package.json" 2>/dev/null \
-       | grep -q '"bun"[[:space:]]*:'; then
-    echo "Bun"; exit 0
+  if command -v jq >/dev/null 2>&1; then
+    if jq -e 'has("engines") and (.engines | type == "object") and (.engines | has("bun"))' "$BUILD_DIR/package.json" >/dev/null 2>&1; then
+      echo "Bun"; exit 0
+    fi
+  else
+    # Fallback to context-aware grep if jq is missing
+    if grep -A 10 '"engines"' "$BUILD_DIR/package.json" 2>/dev/null \
+         | grep -q '"bun"[[:space:]]*:'; then
+      echo "Bun"; exit 0
+    fi
   fi
 
 fi

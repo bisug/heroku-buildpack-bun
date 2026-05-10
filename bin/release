@@ -2,6 +2,10 @@
 # bin/release <build-dir>
 # Prints YAML metadata for the Heroku runtime.
 #
+# NOTE: set -euo pipefail is safe here because all has_script calls are
+# inside [[ ]] conditionals, which are exempt from errexit.
+set -euo pipefail
+#
 # default_process_types is ONLY used when no Procfile is present.
 # It can contain multiple process types — Heroku uses whichever the user scales.
 #
@@ -19,22 +23,6 @@ source "$BP_DIR/lib/json.sh"
 
 PKG="$BUILD_DIR/package.json"
 
-# ── Helper: emit a process type line only if the script exists ──────────────
-# Usage: emit_if_script <process-type> <script-name> [<fallback-cmd>]
-emit_process_type() {
-  local process_type="$1"
-  local script_name="$2"
-  local fallback_cmd="${3:-}"
-
-  if [[ -f "$PKG" ]] && [[ "$(has_script "$PKG" "$script_name")" == "true" ]]; then
-    echo "  ${process_type}: bun run ${script_name}"
-    return 0
-  elif [[ -n "$fallback_cmd" ]]; then
-    echo "  ${process_type}: ${fallback_cmd}"
-    return 0
-  fi
-  return 1
-}
 
 # ── Build the default_process_types block ───────────────────────────────────
 PROCESS_TYPES=""

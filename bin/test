@@ -39,13 +39,13 @@ else
 fi
 rm -rf "$tmp_empty"
 
-# 4. detect accepts a directory with package.json
+# 4. detect rejects a bare package.json (no Bun signals)
 tmp_pkg=$(mktemp -d)
 echo '{}' > "$tmp_pkg/package.json"
 if "$BP_DIR/bin/detect" "$tmp_pkg" &>/dev/null; then
-  pass "detect correctly accepts directory with package.json"
+  fail "detect should have rejected bare package.json (no Bun signals)"
 else
-  fail "detect should have accepted directory with package.json"
+  pass "detect correctly rejects bare package.json"
 fi
 rm -rf "$tmp_pkg"
 
@@ -58,5 +58,64 @@ else
   fail "detect should have accepted directory with .bun-version"
 fi
 rm -rf "$tmp_bun"
+
+# 6. detect accepts a directory with bun.lock
+tmp_lock=$(mktemp -d)
+echo '{}' > "$tmp_lock/bun.lock"
+if "$BP_DIR/bin/detect" "$tmp_lock" &>/dev/null; then
+  pass "detect correctly accepts directory with bun.lock"
+else
+  fail "detect should have accepted directory with bun.lock"
+fi
+rm -rf "$tmp_lock"
+
+# 7. detect accepts package.json with packageManager set to bun
+tmp_pm=$(mktemp -d)
+echo '{"packageManager": "bun@1.2.0"}' > "$tmp_pm/package.json"
+if "$BP_DIR/bin/detect" "$tmp_pm" &>/dev/null; then
+  pass "detect correctly accepts packageManager=bun"
+else
+  fail "detect should have accepted packageManager=bun"
+fi
+rm -rf "$tmp_pm"
+
+# 8. detect accepts package.json with engines.bun
+tmp_engines=$(mktemp -d)
+echo '{"engines": {"bun": ">=1.0.0"}}' > "$tmp_engines/package.json"
+if "$BP_DIR/bin/detect" "$tmp_engines" &>/dev/null; then
+  pass "detect correctly accepts engines.bun"
+else
+  fail "detect should have accepted engines.bun"
+fi
+rm -rf "$tmp_engines"
+
+# 9. compile and release integration test (end-to-end)
+tmp_app=$(mktemp -d)
+tmp_cache=$(mktemp -d)
+tmp_env=$(mktemp -d)
+
+# Setup a basic bun app
+echo '{"scripts": {"start": "bun run index.js"}}' > "$tmp_app/package.json"
+echo 'console.log("Hello from tests!")' > "$tmp_app/index.js"
+echo 'v1.0.0' > "$tmp_app/.bun-version"
+
+# Run compile and capture output to prevent spamming the console, but save it in case of error
+if compile_out=$("$BP_DIR/bin/compile" "$tmp_app" "$tmp_cache" "$tmp_env" 2>&1); then
+  pass "compile successfully builds a basic app"
+else
+  echo "$compile_out"
+  fail "compile failed on a basic app"
+fi
+
+# Run release and check YAML
+release_out=$("$BP_DIR/bin/release" "$tmp_app")
+if echo "$release_out" | grep -q "web: bun run start"; then
+  pass "release outputs correct web process type"
+else
+  echo "$release_out"
+  fail "release output missing 'web: bun run start'"
+fi
+
+rm -rf "$tmp_app" "$tmp_cache" "$tmp_env"
 
 echo "-----> All tests passed"

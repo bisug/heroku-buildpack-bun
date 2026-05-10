@@ -123,13 +123,17 @@ if [[ -n "$CACHE_DIR" && -n "$BUN_VERSION" && -d "$CACHE_DIR/bun-bin-cache/$BUN_
   cp -R "$CACHE_DIR/bun-bin-cache/$BUN_VERSION/." "$BUN_INSTALL/bin/"
 else
   puts_step "Downloading and installing Bun..."
+  BUN_INSTALLER=$(mktemp)
+  trap 'rm -f "$BUN_INSTALLER"' EXIT
   curl -fsSL \
     --connect-timeout 10 \
     --max-time 120 \
     --retry 3 \
     --retry-delay 2 \
     --retry-connrefused \
-    https://bun.sh/install | bash ${BUN_INSTALL_VERSION:+$BUN_INSTALL_VERSION}
+    -o "$BUN_INSTALLER" \
+    https://bun.sh/install
+  bash "$BUN_INSTALLER" ${BUN_INSTALL_VERSION:+$BUN_INSTALL_VERSION}
     
   # Save to cache for future builds
   if [[ -n "$CACHE_DIR" && -n "$BUN_VERSION" ]]; then
@@ -176,7 +180,14 @@ fi
 # Build steps
 # -----------------------------------------------------------------------
 
-# 1. Install dependencies
+# 1. heroku-prebuild (runs BEFORE dependency install, per Heroku convention)
+has_heroku_prebuild_script=$(has_script "package.json" "heroku-prebuild")
+if [[ "${has_heroku_prebuild_script}" == "true" && ! -f ".skip-bun-heroku-prebuild" ]]; then
+  puts_step "Running heroku-prebuild..."
+  bun run heroku-prebuild
+fi
+
+# 2. Install dependencies
 if [[ -f "package.json" && ! -f ".skip-bun-install" ]]; then
   puts_step "Installing dependencies..."
   # Use --frozen-lockfile in CI-like environments to ensure reproducibility.
@@ -187,13 +198,6 @@ if [[ -f "package.json" && ! -f ".skip-bun-install" ]]; then
     puts_warn "No lockfile found — running bun install without --frozen-lockfile."
     bun install
   fi
-fi
-
-# 2. heroku-prebuild
-has_heroku_prebuild_script=$(has_script "package.json" "heroku-prebuild")
-if [[ "${has_heroku_prebuild_script}" == "true" && ! -f ".skip-bun-heroku-prebuild" ]]; then
-  puts_step "Running heroku-prebuild..."
-  bun run heroku-prebuild
 fi
 
 # 3. build

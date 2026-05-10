@@ -9,4 +9,7 @@ lib/json.sh  text eol=lf
 # Text files use platform-native endings
 *.md         text
 *.txt        text
-*.toml       text
+
+# Config files — enforce LF for Linux build environments
+*.yml        text eol=lf
+*.toml       text eol=lf
