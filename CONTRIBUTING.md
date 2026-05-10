@@ -1,5 +1,7 @@
 # Contributing to heroku-buildpack-bun
 
+This buildpack is a fork of [jakeg/heroku-buildpack-bun](https://github.com/jakeg/heroku-buildpack-bun).
+
 First off, thank you for considering contributing to this buildpack! It's people like you that make the open-source community such a great place to learn, inspire, and create.
 
 ## Development Setup

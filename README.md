@@ -140,6 +140,8 @@ Then, reference it via environment variable substitution in your `bunfig.toml`:
 
 ## Contributing
 
+This buildpack is a fork of [jakeg/heroku-buildpack-bun](https://github.com/jakeg/heroku-buildpack-bun).
+
 Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for details on how to set up your environment, run the tests, and submit a pull request.
 
 ## Troubleshooting
