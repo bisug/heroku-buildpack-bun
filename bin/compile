@@ -15,6 +15,7 @@ BP_DIR=$(cd "$(dirname "$0")"; cd ..; pwd)
 # Initialize variables early to satisfy set -u
 BUN_VERSION=""
 BUN_INSTALL_VERSION=""
+NODE_ENV=""
 
 ### Logging helpers (Heroku build log style)
 puts_header() { echo "-----> $*"; }
@@ -51,6 +52,13 @@ if [ -d "$ENV_DIR" ]; then
     export "$key=$(cat "$e")"
   done
 fi
+
+# -----------------------------------------------------------------------
+# Node environment setup
+# -----------------------------------------------------------------------
+# Default to production. This enables huge performance gains in React/Next/Express.
+export NODE_ENV="${NODE_ENV:-production}"
+puts_step "NODE_ENV is set to $NODE_ENV"
 
 # -----------------------------------------------------------------------
 # Bun version resolution
@@ -117,6 +125,7 @@ PROFILE_PATH="$BUILD_DIR/.profile.d/bun.sh"
 mkdir -p "$(dirname "$PROFILE_PATH")"
 echo 'export PATH="$HOME/.heroku/bin:$PATH"' >> "$PROFILE_PATH"
 echo 'export BUN_INSTALL_CACHE_DIR="$HOME/.heroku/bun-pkg-cache"' >> "$PROFILE_PATH"
+echo "export NODE_ENV=\"\${NODE_ENV:-$NODE_ENV}\"" >> "$PROFILE_PATH"
 
 # -----------------------------------------------------------------------
 # Export environment variables for subsequent buildpacks (build phase only)
