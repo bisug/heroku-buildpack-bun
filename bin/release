@@ -27,13 +27,33 @@ PKG="$BUILD_DIR/package.json"
 # ── Build the default_process_types block ───────────────────────────────────
 PROCESS_TYPES=""
 
-# web dyno — check "web" script first, then "start", then entry files
-if [[ -f "$PKG" ]] && [[ "$(has_script "$PKG" "web")" == "true" ]]; then
-  PROCESS_TYPES+="  web: bun run web"$'\n'
-elif [[ -f "$PKG" ]] && [[ "$(has_script "$PKG" "start")" == "true" ]]; then
-  PROCESS_TYPES+="  web: bun run start"$'\n'
-else
-  # No web/start script — scan for common entry files
+if [[ -f "$PKG" ]]; then
+  # web dyno
+  if [[ "$(has_script "$PKG" "web")" == "true" ]]; then
+    PROCESS_TYPES+="  web: bun run web"$'\n'
+  elif [[ "$(has_script "$PKG" "start")" == "true" ]]; then
+    PROCESS_TYPES+="  web: bun run start"$'\n'
+  fi
+
+  # worker dyno
+  if [[ "$(has_script "$PKG" "worker")" == "true" ]]; then
+    PROCESS_TYPES+="  worker: bun run worker"$'\n'
+  fi
+
+  # release dyno
+  if [[ "$(has_script "$PKG" "release")" == "true" ]]; then
+    PROCESS_TYPES+="  release: bun run release"$'\n'
+  fi
+
+  # scheduler dyno
+  if [[ "$(has_script "$PKG" "scheduler")" == "true" ]]; then
+    PROCESS_TYPES+="  scheduler: bun run scheduler"$'\n'
+  fi
+fi
+
+# Fallback: if no process types were explicitly defined in package.json,
+# scan for common entry files and assume it's a web dyno.
+if [[ -z "$PROCESS_TYPES" ]]; then
   WEB_CMD=""
   for entry in "index.ts" "index.js" "src/index.ts" "src/index.js" \
                "main.ts" "main.js" "app.ts" "app.js" "server.ts" "server.js"; do
@@ -45,21 +65,6 @@ else
   if [[ -n "$WEB_CMD" ]]; then
     PROCESS_TYPES+="  web: $WEB_CMD"$'\n'
   fi
-fi
-
-# worker dyno
-if [[ -f "$PKG" ]] && [[ "$(has_script "$PKG" "worker")" == "true" ]]; then
-  PROCESS_TYPES+="  worker: bun run worker"$'\n'
-fi
-
-# release dyno (runs once per deploy, before dynos start)
-if [[ -f "$PKG" ]] && [[ "$(has_script "$PKG" "release")" == "true" ]]; then
-  PROCESS_TYPES+="  release: bun run release"$'\n'
-fi
-
-# scheduler dyno (for Heroku Scheduler add-on)
-if [[ -f "$PKG" ]] && [[ "$(has_script "$PKG" "scheduler")" == "true" ]]; then
-  PROCESS_TYPES+="  scheduler: bun run scheduler"$'\n'
 fi
 
 # ── Emit YAML ────────────────────────────────────────────────────────────────

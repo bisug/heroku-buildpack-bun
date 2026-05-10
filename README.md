@@ -8,6 +8,13 @@ Heroku buildpack for [Bun.js](https://bun.sh/) — allows you to run Bun on Hero
 
 > **Note:** This is an unofficial community buildpack for Bun.
 
+## Features
+
+- **Secure by Default:** Downloads official binaries directly from GitHub Releases (no `curl | bash` script execution) and safely isolates core Heroku environment variables.
+- **Fast:** Aggressively caches Bun binaries and package cache across builds. Uses GitHub API to resolve the `latest` version with intelligent TTL caching.
+- **Architecture Aware:** Automatically detects and installs the correct binary for `x64` and `aarch64` (ARM) architectures.
+- **Reproducible:** Automatically detects `bun.lock` and `bun.lockb` to ensure frozen lockfile installations.
+
 ## Supported Stacks
 
 - `heroku-22`
@@ -19,6 +26,15 @@ To add the buildpack to your Heroku app, visit the settings page for your app on
 
 ```text
 https://github.com/bisug/heroku-buildpack-bun
+```
+
+### Using with multiple buildpacks
+
+If your app requires multiple buildpacks (e.g., using Bun for a frontend build in a Python or Ruby app), you can add it at a specific index using the Heroku CLI:
+
+```bash
+# Add Bun as the first buildpack
+heroku buildpacks:add --index 1 https://github.com/bisug/heroku-buildpack-bun
 ```
 
 ### Detection
@@ -40,12 +56,14 @@ If you have a [`Procfile`](https://devcenter.heroku.com/articles/procfile) (e.g.
 
 If no `Procfile` is present, the buildpack will automatically create default process types based on the scripts in your `package.json`:
 
-- **`web` dyno:** Looks for a `"web"` script, then a `"start"` script, and finally scans for common entry files (like `index.ts`, `server.ts`, etc.).
+- **`web` dyno:** Looks for a `"web"` script, then a `"start"` script.
 - **`worker` dyno:** Looks for a `"worker"` script.
 - **`release` dyno:** Looks for a `"release"` script.
 - **`scheduler` dyno:** Looks for a `"scheduler"` script.
 
-For example, to run a worker-only app without a Procfile, simply define a `"worker"` script in your `package.json` and deploy!
+**Fallback:** If absolutely *no* process types are found from the scripts above, the buildpack will scan for common entry files (like `index.ts`, `server.ts`, etc.) and automatically create a `web` dyno.
+
+For example, to run a worker-only app without a Procfile, simply define a `"worker"` script in your `package.json`. The buildpack will detect it and will *not* eagerly create an unnecessary `web` dyno!
 
 ## Pinning a Bun version
 
@@ -82,25 +100,55 @@ If a `bun.lock` or `bun.lockb` lockfile is present, dependencies are installed w
 
 ## Binding to the correct port
 
-Heroku assigns a port via the `$PORT` environment variable. Example:
+Heroku assigns a dynamic port via the `$PORT` environment variable. Your web server **must** bind to this port, or Heroku will crash your dyno with an `R10 Boot Timeout` error after 60 seconds.
+
+Here is an idiomatic example using `Bun.env.PORT`:
 
 ```js
-import { env } from 'process'
-
 const server = Bun.serve({
-  port: env.PORT || 3000,
+  port: Bun.env.PORT || 3000,
   fetch(request) {
-    return new Response('Welcome to Bun on Heroku!')
+    return new Response('Welcome to Bun on Heroku!');
   },
-})
+});
 
-console.log(`Listening on port ${server.port}`)
+console.log(`Listening on port ${server.port}`);
+```
+
+## Environment Variables
+
+By default, the buildpack sets `NODE_ENV=production` during the build and at runtime to ensure frameworks and libraries are fully optimized. If you need a different environment, you can override it using Heroku config vars:
+
+```bash
+heroku config:set NODE_ENV=development
+```
+
+## Private Packages & Authentication
+
+If your project depends on private packages (e.g., from npm Enterprise or GitHub Packages), you can authenticate securely without committing secrets to your codebase.
+
+Set your authentication token as a Heroku config var:
+```bash
+heroku config:set BUN_AUTH_TOKEN=your_token_here
+```
+
+Then, reference it via environment variable substitution in your `bunfig.toml`:
+```toml
+[install.scopes]
+"@my-org" = { token = "$BUN_AUTH_TOKEN", url = "https://npm.pkg.github.com/" }
 ```
 
 ## Contributing
 
 Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for details on how to set up your environment, run the tests, and submit a pull request.
 
-## Potential issues
+## Troubleshooting
 
-Use the [Issues tab](https://github.com/bisug/heroku-buildpack-bun/issues) to report any issues.
+### 1. `bun install` fails with frozen lockfile error
+If you see an error about a lockfile mismatch during `bun install`, it means your `bun.lock` or `bun.lockb` is out of sync with your `package.json`. Run `bun install` locally to update it, and commit the updated lockfile.
+
+### 2. App crashes with R10 (Boot timeout)
+Ensure you are binding your web server to the `$PORT` environment variable provided by Heroku (as shown in the port binding example), and not hardcoding a specific port like `3000`.
+
+### 3. Reporting Issues
+If you encounter a bug within the buildpack itself, please use the [Issues tab](https://github.com/bisug/heroku-buildpack-bun/issues) to report it. Provide your Heroku build log to help isolate the issue.
