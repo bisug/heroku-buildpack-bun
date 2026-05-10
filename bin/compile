@@ -84,7 +84,7 @@ if [[ -n "$BUN_VERSION" ]]; then
   if [[ "$BUN_VERSION" =~ ^[0-9] ]]; then
     BUN_VERSION="v${BUN_VERSION}"
   fi
-  BUN_INSTALL_VERSION="-s bun-${BUN_VERSION}"
+  BUN_INSTALL_VERSION="bun-${BUN_VERSION}"
   puts_header "Bun $BUN_VERSION"
 else
   puts_header "Bun (latest)"
