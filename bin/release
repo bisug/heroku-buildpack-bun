@@ -1,32 +1,88 @@
 #!/usr/bin/env bash
 # bin/release <build-dir>
 # Prints YAML metadata for the Heroku runtime.
-# Note: default_process_types is only used when no Procfile is present.
+#
+# default_process_types is ONLY used when no Procfile is present.
+# It can contain multiple process types — Heroku uses whichever the user scales.
+#
+# Detection logic (all sourced from package.json scripts):
+#   "start"  or "web"    → web dyno   (bun run <script>)
+#   "worker"             → worker dyno
+#   "release"            → release dyno (runs once per deploy)
+#   "scheduler"          → scheduler dyno
+#   No matching scripts  → falls back to common entry file for web
 
 BUILD_DIR="${1:-}"
 BP_DIR=$(cd "$(dirname "$0")"; cd ..; pwd)
 
 source "$BP_DIR/lib/json.sh"
 
-START_CMD="bun run start"
+PKG="$BUILD_DIR/package.json"
 
-if [[ -n "$BUILD_DIR" ]]; then
-  # Check whether a "start" script is defined in package.json
-  has_start=$(has_script "$BUILD_DIR/package.json" "start")
-  if [[ "$has_start" != "true" ]]; then
-    # No start script — look for common entry point files
-    for entry in "index.ts" "index.js" "src/index.ts" "src/index.js" "main.ts" "main.js" "app.ts" "app.js"; do
-      if [ -f "$BUILD_DIR/$entry" ]; then
-        START_CMD="bun run $entry"
-        break
-      fi
-    done
+# ── Helper: emit a process type line only if the script exists ──────────────
+# Usage: emit_if_script <process-type> <script-name> [<fallback-cmd>]
+emit_process_type() {
+  local process_type="$1"
+  local script_name="$2"
+  local fallback_cmd="${3:-}"
+
+  if [[ -f "$PKG" ]] && [[ "$(has_script "$PKG" "$script_name")" == "true" ]]; then
+    echo "  ${process_type}: bun run ${script_name}"
+    return 0
+  elif [[ -n "$fallback_cmd" ]]; then
+    echo "  ${process_type}: ${fallback_cmd}"
+    return 0
+  fi
+  return 1
+}
+
+# ── Build the default_process_types block ───────────────────────────────────
+PROCESS_TYPES=""
+
+# web dyno — check "web" script first, then "start", then entry files
+if [[ -f "$PKG" ]] && [[ "$(has_script "$PKG" "web")" == "true" ]]; then
+  PROCESS_TYPES+="  web: bun run web"$'\n'
+elif [[ -f "$PKG" ]] && [[ "$(has_script "$PKG" "start")" == "true" ]]; then
+  PROCESS_TYPES+="  web: bun run start"$'\n'
+else
+  # No web/start script — scan for common entry files
+  WEB_CMD=""
+  for entry in "index.ts" "index.js" "src/index.ts" "src/index.js" \
+               "main.ts" "main.js" "app.ts" "app.js" "server.ts" "server.js"; do
+    if [[ -f "$BUILD_DIR/$entry" ]]; then
+      WEB_CMD="bun run $entry"
+      break
+    fi
+  done
+  if [[ -n "$WEB_CMD" ]]; then
+    PROCESS_TYPES+="  web: $WEB_CMD"$'\n'
   fi
 fi
 
-cat << EOF
----
-addons: []
-default_process_types:
-  web: $START_CMD
-EOF
+# worker dyno
+if [[ -f "$PKG" ]] && [[ "$(has_script "$PKG" "worker")" == "true" ]]; then
+  PROCESS_TYPES+="  worker: bun run worker"$'\n'
+fi
+
+# release dyno (runs once per deploy, before dynos start)
+if [[ -f "$PKG" ]] && [[ "$(has_script "$PKG" "release")" == "true" ]]; then
+  PROCESS_TYPES+="  release: bun run release"$'\n'
+fi
+
+# scheduler dyno (for Heroku Scheduler add-on)
+if [[ -f "$PKG" ]] && [[ "$(has_script "$PKG" "scheduler")" == "true" ]]; then
+  PROCESS_TYPES+="  scheduler: bun run scheduler"$'\n'
+fi
+
+# ── Emit YAML ────────────────────────────────────────────────────────────────
+echo "---"
+echo "addons: []"
+echo "default_process_types:"
+
+if [[ -n "$PROCESS_TYPES" ]]; then
+  printf "%s" "$PROCESS_TYPES"
+else
+  # Absolute fallback — nothing detected; emit a placeholder that will fail
+  # loudly rather than silently deploying the wrong thing.
+  echo "  web: bun run start"
+fi
