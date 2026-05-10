@@ -1,8 +1,32 @@
 #!/usr/bin/env bash
+# bin/release <build-dir>
+# Prints YAML metadata for the Heroku runtime.
+# Note: default_process_types is only used when no Procfile is present.
+
+BUILD_DIR="${1:-}"
+BP_DIR=$(cd "$(dirname "$0")"; cd ..; pwd)
+
+source "$BP_DIR/lib/json.sh"
+
+START_CMD="bun run start"
+
+if [[ -n "$BUILD_DIR" ]]; then
+  # Check whether a "start" script is defined in package.json
+  has_start=$(has_script "$BUILD_DIR/package.json" "start")
+  if [[ "$has_start" != "true" ]]; then
+    # No start script — look for common entry point files
+    for entry in "index.ts" "index.js" "src/index.ts" "src/index.js" "main.ts" "main.js" "app.ts" "app.js"; do
+      if [ -f "$BUILD_DIR/$entry" ]; then
+        START_CMD="bun run $entry"
+        break
+      fi
+    done
+  fi
+fi
 
 cat << EOF
 ---
 addons: []
 default_process_types:
-  web: bun start
+  web: $START_CMD
 EOF

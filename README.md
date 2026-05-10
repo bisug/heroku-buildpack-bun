@@ -1,31 +1,57 @@
 # heroku-buildpack-bun
 
-Heroku buildpack for [Bun.js](https://bun.sh/) - allows you to run Bun on Heroku.
+Heroku buildpack for [Bun.js](https://bun.sh/) — allows you to run Bun on Heroku.
 
-Largely copied from the [Deno buildpack](https://github.com/chibat/heroku-buildpack-deno) and [Node.js buildpack](https://github.com/heroku/heroku-buildpack-nodejs).
+Based on the [Deno buildpack](https://github.com/chibat/heroku-buildpack-deno) and [Node.js buildpack](https://github.com/heroku/heroku-buildpack-nodejs).
+
+## Supported Stacks
+
+- `heroku-22`
+- `heroku-24`
 
 ## How to use
 
-To add the buildpack to your Heroku app, visit the settings page for your app on Heroku, then under 'Buildpacks' add the URL `https://github.com/jakeg/heroku-buildpack-bun`.
+To add the buildpack to your Heroku app, visit the settings page for your app on Heroku, then under **Buildpacks** add:
 
-You'll either need a [`Procfile`](https://devcenter.heroku.com/articles/procfile) in the root folder of your app (with eg `web: bun index.js` in it), or a `package.json` with a start script listed.
+```
+https://github.com/bisug/heroku-buildpack-bun
+```
 
-Pin a certain Bun version such as `v1.1.20` with the `BUN_VERSION` environment variable (eg under 'Config Vars' on your app's Heroku settings page), or with a `.bun-version`, `runtime.bun.txt` or `runtime.txt` containing a single line for the pinned version. The version can be specified with or without a leading `v` eg `v1.0.7` or `1.0.7` or [any other Bun tags](https://github.com/oven-sh/bun/tags).
+You'll either need a [`Procfile`](https://devcenter.heroku.com/articles/procfile) in the root folder of your app (e.g. `web: bun index.js`), or a `package.json` with a `start` script.
 
-## Support scripts
+## Pinning a Bun version
 
-This buildpack automatically runs the following bun commands and scripts if defined in `package.json`.
+Pin a specific Bun version using **one** of the following methods (listed in priority order):
 
-- install (`bun install`)
-- heroku-prebuild (`bun run heroku-prebuild`)
-- build (`bun run build`)
-- heroku-postbuild (`bun run heroku-postbuild`)
+| Method | Example |
+|--------|---------|
+| Heroku Config Var `BUN_VERSION` | `heroku config:set BUN_VERSION=1.1.20` |
+| `.bun-version` file in project root | `1.1.20` or `v1.1.20` |
+| `runtime.bun.txt` file in project root | `1.1.20` |
+| `runtime.txt` file (bare version only) | `1.1.20` |
 
-Optionally skip any of these steps with files named `.skip-bun-install`, `.skip-bun-heroku-prebuild`, `.skip-bun-build` or `.skip-bun-heroku-postbuild`.
+The version can be specified with or without a leading `v`, e.g. `v1.1.20` or `1.1.20`. Any [Bun release tag](https://github.com/oven-sh/bun/releases) is valid.
 
-## Binding to correct port
+> **Note:** Avoid using `runtime.txt` if you have other buildpacks (e.g. Ruby or Python) that also use `runtime.txt` for their own version pinning. Use `.bun-version` or `BUN_VERSION` instead.
 
-Bind to `env.PORT` eg
+## Build scripts
+
+This buildpack automatically runs the following commands if defined in `package.json`:
+
+| Step | Command | Skip with |
+|------|---------|-----------|
+| Install | `bun install` | `.skip-bun-install` |
+| Prebuild | `bun run heroku-prebuild` | `.skip-bun-heroku-prebuild` |
+| Build | `bun run build` | `.skip-bun-build` |
+| Postbuild | `bun run heroku-postbuild` | `.skip-bun-heroku-postbuild` |
+
+### Reproducible installs
+
+If a `bun.lock` or `bun.lockb` lockfile is present, dependencies are installed with `--frozen-lockfile` to ensure reproducible builds. If no lockfile exists, a regular `bun install` is run (with a warning).
+
+## Binding to the correct port
+
+Heroku assigns a port via the `$PORT` environment variable. Example:
 
 ```js
 import { env } from 'process'
@@ -33,13 +59,13 @@ import { env } from 'process'
 const server = Bun.serve({
   port: env.PORT || 3000,
   fetch(request) {
-    return new Response(`Welcome to Bun running on Heroku!`)
+    return new Response('Welcome to Bun on Heroku!')
   },
 })
 
-console.log(`Listening on localhost:${server.port}`)
+console.log(`Listening on port ${server.port}`)
 ```
 
 ## Potential issues
 
-Use the Issues tab to report any issues.
+Use the [Issues tab](https://github.com/bisug/heroku-buildpack-bun/issues) to report any issues.

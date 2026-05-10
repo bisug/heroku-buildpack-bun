@@ -1,3 +1,23 @@
 #!/usr/bin/env bash
+# bin/detect <build-dir>
+# Exits 0 (with framework name on stdout) if the app is a Bun project.
+# Exits 1 if this buildpack does not apply.
 
-exit 0
+BUILD_DIR="${1}"
+
+# Highest confidence: bun-specific lockfiles or version pin
+if [ -f "$BUILD_DIR/bun.lockb" ] || \
+   [ -f "$BUILD_DIR/bun.lock" ]  || \
+   [ -f "$BUILD_DIR/.bun-version" ] || \
+   [ -f "$BUILD_DIR/runtime.bun.txt" ]; then
+  echo "Bun"
+  exit 0
+fi
+
+# Lower confidence: generic package.json (could be any JS runtime)
+if [ -f "$BUILD_DIR/package.json" ]; then
+  echo "Bun"
+  exit 0
+fi
+
+exit 1

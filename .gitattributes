@@ -1,0 +1,12 @@
+# Enforce Unix LF line endings for all shell scripts.
+# Prevents CRLF corruption on Windows from breaking execution on Heroku Linux dynos.
+bin/compile  text eol=lf
+bin/detect   text eol=lf
+bin/release  text eol=lf
+bin/test     text eol=lf
+lib/json.sh  text eol=lf
+
+# Text files use platform-native endings
+*.md         text
+*.txt        text
+*.toml       text

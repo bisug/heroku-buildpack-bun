@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# bin/test
+# Basic smoke tests for the buildpack — run via: heroku buildpacks:test
+# Supported stacks: heroku-22, heroku-24
+
+set -euo pipefail
+
+BP_DIR=$(cd "$(dirname "$0")"; cd ..; pwd)
+
+pass() { echo "  PASS: $*"; }
+fail() { echo "  FAIL: $*" >&2; exit 1; }
+
+echo "-----> Running buildpack tests"
+
+# 1. Required scripts are executable
+for script in detect compile release; do
+  if [ -x "$BP_DIR/bin/$script" ]; then
+    pass "bin/$script is executable"
+  else
+    fail "bin/$script is not executable"
+  fi
+done
+
+# 2. Required tools present on build dyno
+for tool in jq curl unzip bash; do
+  if command -v "$tool" &>/dev/null; then
+    pass "$tool is available"
+  else
+    fail "$tool is required but not found"
+  fi
+done
+
+# 3. detect rejects a non-Bun directory
+tmp_empty=$(mktemp -d)
+if "$BP_DIR/bin/detect" "$tmp_empty" &>/dev/null; then
+  fail "detect should have rejected an empty directory"
+else
+  pass "detect correctly rejects non-Bun directory"
+fi
+rm -rf "$tmp_empty"
+
+# 4. detect accepts a directory with package.json
+tmp_pkg=$(mktemp -d)
+echo '{}' > "$tmp_pkg/package.json"
+if "$BP_DIR/bin/detect" "$tmp_pkg" &>/dev/null; then
+  pass "detect correctly accepts directory with package.json"
+else
+  fail "detect should have accepted directory with package.json"
+fi
+rm -rf "$tmp_pkg"
+
+# 5. detect accepts a directory with .bun-version
+tmp_bun=$(mktemp -d)
+echo 'v1.1.20' > "$tmp_bun/.bun-version"
+if "$BP_DIR/bin/detect" "$tmp_bun" &>/dev/null; then
+  pass "detect correctly accepts directory with .bun-version"
+else
+  fail "detect should have accepted directory with .bun-version"
+fi
+rm -rf "$tmp_bun"
+
+echo "-----> All tests passed"
