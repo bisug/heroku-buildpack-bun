@@ -27,55 +27,57 @@ PKG="$BUILD_DIR/package.json"
 # ── Build the default_process_types block ───────────────────────────────────
 PROCESS_TYPES=""
 
-if [[ -f "$PKG" ]]; then
-  # web dyno
-  if [[ "$(has_script "$PKG" "web")" == "true" ]]; then
-    PROCESS_TYPES+="  web: bun run web"$'\n'
-  elif [[ "$(has_script "$PKG" "start")" == "true" ]]; then
-    PROCESS_TYPES+="  web: bun run start"$'\n'
-  fi
+# If the user provides a Procfile, Heroku will use it. We should NOT try to 
+# provide default_process_types, otherwise Heroku will merge our guessed 'web' 
+# process with their Procfile (e.g., resulting in both 'web' and 'worker' running).
+if [[ ! -f "$BUILD_DIR/Procfile" ]]; then
 
-  # worker dyno
-  if [[ "$(has_script "$PKG" "worker")" == "true" ]]; then
-    PROCESS_TYPES+="  worker: bun run worker"$'\n'
-  fi
-
-  # release dyno
-  if [[ "$(has_script "$PKG" "release")" == "true" ]]; then
-    PROCESS_TYPES+="  release: bun run release"$'\n'
-  fi
-
-  # scheduler dyno
-  if [[ "$(has_script "$PKG" "scheduler")" == "true" ]]; then
-    PROCESS_TYPES+="  scheduler: bun run scheduler"$'\n'
-  fi
-fi
-
-# Fallback: if no process types were explicitly defined in package.json,
-# scan for common entry files and assume it's a web dyno.
-if [[ -z "$PROCESS_TYPES" ]]; then
-  WEB_CMD=""
-  for entry in "index.ts" "index.js" "src/index.ts" "src/index.js" \
-               "main.ts" "main.js" "app.ts" "app.js" "server.ts" "server.js"; do
-    if [[ -f "$BUILD_DIR/$entry" ]]; then
-      WEB_CMD="bun run $entry"
-      break
+  if [[ -f "$PKG" ]]; then
+    # web dyno
+    if [[ "$(has_script "$PKG" "web")" == "true" ]]; then
+      PROCESS_TYPES+="  web: bun run web"$'\n'
+    elif [[ "$(has_script "$PKG" "start")" == "true" ]]; then
+      PROCESS_TYPES+="  web: bun run start"$'\n'
     fi
-  done
-  if [[ -n "$WEB_CMD" ]]; then
-    PROCESS_TYPES+="  web: $WEB_CMD"$'\n'
+
+    # worker dyno
+    if [[ "$(has_script "$PKG" "worker")" == "true" ]]; then
+      PROCESS_TYPES+="  worker: bun run worker"$'\n'
+    fi
+
+    # release dyno
+    if [[ "$(has_script "$PKG" "release")" == "true" ]]; then
+      PROCESS_TYPES+="  release: bun run release"$'\n'
+    fi
+
+    # scheduler dyno
+    if [[ "$(has_script "$PKG" "scheduler")" == "true" ]]; then
+      PROCESS_TYPES+="  scheduler: bun run scheduler"$'\n'
+    fi
+  fi
+
+  # Fallback: if no process types were explicitly defined in package.json,
+  # scan for common entry files and assume it's a web dyno.
+  if [[ -z "$PROCESS_TYPES" ]]; then
+    WEB_CMD=""
+    for entry in "index.ts" "index.js" "src/index.ts" "src/index.js" \
+                 "main.ts" "main.js" "app.ts" "app.js" "server.ts" "server.js"; do
+      if [[ -f "$BUILD_DIR/$entry" ]]; then
+        WEB_CMD="bun run $entry"
+        break
+      fi
+    done
+    if [[ -n "$WEB_CMD" ]]; then
+      PROCESS_TYPES+="  web: $WEB_CMD"$'\n'
+    fi
   fi
 fi
 
 # ── Emit YAML ────────────────────────────────────────────────────────────────
 echo "---"
 echo "addons: []"
-echo "default_process_types:"
 
 if [[ -n "$PROCESS_TYPES" ]]; then
+  echo "default_process_types:"
   printf "%s" "$PROCESS_TYPES"
-else
-  # Absolute fallback — nothing detected; emit a placeholder that will fail
-  # loudly rather than silently deploying the wrong thing.
-  echo "  web: bun run start"
 fi
