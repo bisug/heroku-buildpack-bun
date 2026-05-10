@@ -12,6 +12,8 @@ fail() { echo "  FAIL: $*" >&2; exit 1; }
 
 echo "-----> Running buildpack tests"
 
+# ── Section 1: Sanity checks ────────────────────────────────────────────────
+
 # 1. Required scripts are executable
 for script in detect compile release; do
   if [ -x "$BP_DIR/bin/$script" ]; then
@@ -29,6 +31,8 @@ for tool in jq curl unzip bash; do
     fail "$tool is required but not found"
   fi
 done
+
+# ── Section 2: Detection tests ──────────────────────────────────────────────
 
 # 3. detect rejects a non-Bun directory
 tmp_empty=$(mktemp -d)
@@ -69,7 +73,17 @@ else
 fi
 rm -rf "$tmp_lock"
 
-# 7. detect accepts package.json with packageManager set to bun
+# 7. detect accepts a directory with bun.lockb (legacy binary lockfile)
+tmp_lockb=$(mktemp -d)
+touch "$tmp_lockb/bun.lockb"
+if "$BP_DIR/bin/detect" "$tmp_lockb" &>/dev/null; then
+  pass "detect correctly accepts directory with bun.lockb"
+else
+  fail "detect should have accepted directory with bun.lockb"
+fi
+rm -rf "$tmp_lockb"
+
+# 8. detect accepts package.json with packageManager set to bun
 tmp_pm=$(mktemp -d)
 echo '{"packageManager": "bun@1.2.0"}' > "$tmp_pm/package.json"
 if "$BP_DIR/bin/detect" "$tmp_pm" &>/dev/null; then
@@ -79,7 +93,7 @@ else
 fi
 rm -rf "$tmp_pm"
 
-# 8. detect accepts package.json with engines.bun
+# 9. detect accepts package.json with engines.bun
 tmp_engines=$(mktemp -d)
 echo '{"engines": {"bun": ">=1.0.0"}}' > "$tmp_engines/package.json"
 if "$BP_DIR/bin/detect" "$tmp_engines" &>/dev/null; then
@@ -89,7 +103,123 @@ else
 fi
 rm -rf "$tmp_engines"
 
-# 9. compile and release integration test (end-to-end)
+# 10. detect accepts bunfig.toml
+tmp_bunfig=$(mktemp -d)
+touch "$tmp_bunfig/bunfig.toml"
+if "$BP_DIR/bin/detect" "$tmp_bunfig" &>/dev/null; then
+  pass "detect correctly accepts bunfig.toml"
+else
+  fail "detect should have accepted bunfig.toml"
+fi
+rm -rf "$tmp_bunfig"
+
+# 11. detect rejects package.json with engines.node but no engines.bun
+tmp_node=$(mktemp -d)
+echo '{"engines": {"node": ">=18"}}' > "$tmp_node/package.json"
+if "$BP_DIR/bin/detect" "$tmp_node" &>/dev/null; then
+  fail "detect should have rejected engines.node without engines.bun"
+else
+  pass "detect correctly rejects engines.node without engines.bun"
+fi
+rm -rf "$tmp_node"
+
+# 12. detect rejects non-existent directory
+if "$BP_DIR/bin/detect" "/tmp/this-path-does-not-exist-$$" &>/dev/null; then
+  fail "detect should have rejected non-existent directory"
+else
+  pass "detect correctly rejects non-existent directory"
+fi
+
+# ── Section 3: JSON helper tests ─────────────────────────────────────────────
+
+source "$BP_DIR/lib/json.sh"
+
+# 13. has_script returns true for existing script
+tmp_json=$(mktemp -d)
+echo '{"scripts": {"start": "bun index.js", "build": "bun build"}}' > "$tmp_json/package.json"
+if [[ "$(has_script "$tmp_json/package.json" "start")" == "true" ]]; then
+  pass "has_script finds existing script"
+else
+  fail "has_script should find 'start' script"
+fi
+
+# 14. has_script returns false for missing script
+if [[ "$(has_script "$tmp_json/package.json" "nonexistent")" == "false" ]]; then
+  pass "has_script returns false for missing script"
+else
+  fail "has_script should return false for missing 'nonexistent' script"
+fi
+
+# 15. is_invalid_json_file detects invalid JSON
+echo 'not valid json{' > "$tmp_json/bad.json"
+if [[ "$(is_invalid_json_file "$tmp_json/bad.json")" == "true" ]]; then
+  pass "is_invalid_json_file correctly detects invalid JSON"
+else
+  fail "is_invalid_json_file should detect invalid JSON"
+fi
+
+# 16. is_invalid_json_file passes valid JSON
+if [[ "$(is_invalid_json_file "$tmp_json/package.json")" == "false" ]]; then
+  pass "is_invalid_json_file correctly passes valid JSON"
+else
+  fail "is_invalid_json_file should pass valid JSON"
+fi
+rm -rf "$tmp_json"
+
+# ── Section 4: Release script tests ─────────────────────────────────────────
+
+# 17. release outputs web: bun run start for start script
+tmp_rel=$(mktemp -d)
+echo '{"scripts": {"start": "bun run index.js"}}' > "$tmp_rel/package.json"
+release_out=$("$BP_DIR/bin/release" "$tmp_rel")
+if echo "$release_out" | grep -q "web: bun run start"; then
+  pass "release outputs 'web: bun run start' for start script"
+else
+  echo "$release_out"
+  fail "release output missing 'web: bun run start'"
+fi
+rm -rf "$tmp_rel"
+
+# 18. release outputs worker process type
+tmp_worker=$(mktemp -d)
+echo '{"scripts": {"start": "bun run index.js", "worker": "bun run worker.js"}}' > "$tmp_worker/package.json"
+release_out=$("$BP_DIR/bin/release" "$tmp_worker")
+if echo "$release_out" | grep -q "worker: bun run worker"; then
+  pass "release outputs worker process type"
+else
+  echo "$release_out"
+  fail "release output missing 'worker: bun run worker'"
+fi
+rm -rf "$tmp_worker"
+
+# 19. release prefers 'web' script over 'start'
+tmp_web=$(mktemp -d)
+echo '{"scripts": {"web": "bun serve.js", "start": "bun index.js"}}' > "$tmp_web/package.json"
+release_out=$("$BP_DIR/bin/release" "$tmp_web")
+if echo "$release_out" | grep -q "web: bun run web"; then
+  pass "release prefers 'web' script over 'start'"
+else
+  echo "$release_out"
+  fail "release should prefer 'web' script over 'start'"
+fi
+rm -rf "$tmp_web"
+
+# 20. release falls back to entry file when no scripts defined
+tmp_entry=$(mktemp -d)
+echo '{}' > "$tmp_entry/package.json"
+echo 'console.log("hello")' > "$tmp_entry/index.ts"
+release_out=$("$BP_DIR/bin/release" "$tmp_entry")
+if echo "$release_out" | grep -q "web: bun run index.ts"; then
+  pass "release falls back to index.ts entry file"
+else
+  echo "$release_out"
+  fail "release should fall back to 'web: bun run index.ts'"
+fi
+rm -rf "$tmp_entry"
+
+# ── Section 5: Compile + Release integration test ───────────────────────────
+
+# 21. compile and release integration test (end-to-end)
 tmp_app=$(mktemp -d)
 tmp_cache=$(mktemp -d)
 tmp_env=$(mktemp -d)
@@ -119,3 +249,4 @@ fi
 rm -rf "$tmp_app" "$tmp_cache" "$tmp_env"
 
 echo "-----> All tests passed"
+

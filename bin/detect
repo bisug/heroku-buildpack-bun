@@ -2,8 +2,13 @@
 # bin/detect <build-dir>
 # Exits 0 with "Bun" on stdout if the app is a Bun project.
 # Exits 1 otherwise.
+set -euo pipefail
 
-BUILD_DIR="${1}"
+BUILD_DIR="${1:-}"
+
+if [[ -z "$BUILD_DIR" ]] || [[ ! -d "$BUILD_DIR" ]]; then
+  exit 1
+fi
 
 # ── Tier 1: Bun-exclusive files (highest confidence) ────────────────────────
 

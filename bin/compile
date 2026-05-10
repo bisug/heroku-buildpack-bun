@@ -7,6 +7,14 @@
 # -o pipefail propagate errors through pipes
 set -euo pipefail
 
+### Global error handler — provides context on unexpected failures
+on_error() {
+  puts_warn "Build failed — see above for details."
+  puts_warn "If this looks like a buildpack bug, please open an issue:"
+  puts_warn "https://github.com/bisug/heroku-buildpack-bun/issues"
+}
+trap on_error ERR
+
 BUILD_DIR="${1:-.}"
 CACHE_DIR="${2:-}"
 ENV_DIR="${3:-}"
@@ -14,7 +22,6 @@ BP_DIR=$(cd "$(dirname "$0")"; cd ..; pwd)
 
 # Initialize variables early to satisfy set -u
 BUN_VERSION=""
-BUN_INSTALL_VERSION=""
 NODE_ENV=""
 
 ### Logging helpers (Heroku build log style)
@@ -36,12 +43,11 @@ if ! command -v unzip &>/dev/null; then
   exit 1
 fi
 
-HEROKU_DIR="$BUILD_DIR/.heroku"
+cd "$BUILD_DIR"
 
-# Copy app files to $HOME so paths match at runtime (/app).
-# Using trailing /. ensures contents are copied into $HOME, not a subdirectory.
-cp -rp "$BUILD_DIR/." "$HOME/"
-cd "$HOME"
+# Ensure .heroku directory exists
+HEROKU_DIR="$BUILD_DIR/.heroku"
+mkdir -p "$HEROKU_DIR"
 
 # Export the content of ENV_DIR into the environment.
 # Uses glob expansion (not ls) to safely handle filenames.
@@ -49,6 +55,10 @@ if [ -d "$ENV_DIR" ]; then
   for e in "$ENV_DIR/"*; do
     [ -f "$e" ] || continue
     key=$(basename "$e")
+    # Deny-list: never overwrite critical shell/Heroku internals
+    case "$key" in
+      PATH|HOME|GIT_DIR|BUILDPACK_URL|SOURCE_VERSION) continue ;;
+    esac
     export "$key=$(cat "$e")"
   done
 fi
@@ -69,13 +79,19 @@ if [[ -n "$BUN_VERSION" ]]; then
   puts_step "Using BUN_VERSION from config var: $BUN_VERSION"
 elif [ -f "$BUILD_DIR/.bun-version" ]; then
   BUN_VERSION="$(cat "$BUILD_DIR/.bun-version" | tr -d '[:space:]')"
+elif [ -f "$BUILD_DIR/package.json" ] && jq -e '.engines.bun' "$BUILD_DIR/package.json" >/dev/null 2>&1; then
+  BUN_VERSION="$(jq -r '.engines.bun' "$BUILD_DIR/package.json")"
+  puts_step "Using Bun version from package.json engines: $BUN_VERSION"
 elif [ -f "$BUILD_DIR/runtime.bun.txt" ]; then
   BUN_VERSION="$(cat "$BUILD_DIR/runtime.bun.txt" | tr -d '[:space:]')"
 elif [ -f "$BUILD_DIR/runtime.txt" ]; then
   _rt="$(cat "$BUILD_DIR/runtime.txt" | tr -d '[:space:]')"
-  # Guard against Ruby/Python runtime strings like "ruby-3.2.0" or "python-3.12"
-  if [[ "$_rt" =~ ^v?[0-9]+\.[0-9]+ ]]; then
+  # Guard against Ruby/Python/Node runtime strings (e.g. "ruby-3.2.0", "nodejs-18.x")
+  # Only accept if it looks like a version number or starts with 'bun-'
+  if [[ "$_rt" =~ ^[0-9] ]] || [[ "$_rt" =~ ^v[0-9] ]]; then
     BUN_VERSION="$_rt"
+  elif [[ "$_rt" =~ ^bun- ]]; then
+    BUN_VERSION="${_rt#bun-}"
   fi
 fi
 
@@ -84,7 +100,12 @@ if [[ -n "$BUN_VERSION" ]]; then
   if [[ "$BUN_VERSION" =~ ^[0-9] ]]; then
     BUN_VERSION="v${BUN_VERSION}"
   fi
-  BUN_INSTALL_VERSION="bun-${BUN_VERSION}"
+  # Validate version format to prevent injection via malicious version files
+  if [[ ! "$BUN_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
+    puts_warn "Invalid Bun version format: $BUN_VERSION"
+    puts_warn "Expected format: v1.2.3 or v1.2.3-canary.1"
+    exit 1
+  fi
   puts_header "Bun $BUN_VERSION"
 else
   puts_header "Bun (latest)"
@@ -105,8 +126,8 @@ if [[ -n "$CACHE_DIR" ]]; then
   # Manage package cache size (prevents Heroku 1GB cache limit violations)
   if [ -d "$BUN_INSTALL_CACHE_DIR" ]; then
     CACHE_SIZE=$(du -sm "$BUN_INSTALL_CACHE_DIR" 2>/dev/null | cut -f1 || echo "0")
-    if [ "$CACHE_SIZE" -gt 300 ]; then
-      puts_warn "Bun package cache exceeded 300MB. Clearing to prevent Heroku cache bloat."
+    if [ "$CACHE_SIZE" -gt 800 ]; then
+      puts_warn "Bun package cache exceeded 800MB. Clearing to prevent Heroku cache bloat."
       rm -rf "$BUN_INSTALL_CACHE_DIR"
     fi
   fi
@@ -116,27 +137,121 @@ fi
 mkdir -p "$BUN_INSTALL_CACHE_DIR"
 
 # -----------------------------------------------------------------------
-# Download or Restore Bun Binary
+# Resolve latest version if not pinned
 # -----------------------------------------------------------------------
-if [[ -n "$CACHE_DIR" && -n "$BUN_VERSION" && -d "$CACHE_DIR/bun-bin-cache/$BUN_VERSION" ]]; then
+if [[ -z "$BUN_VERSION" ]]; then
+  # Check if we have a cached "latest" resolution less than 1 hour old
+  LATEST_CACHE_FILE="${CACHE_DIR:+$CACHE_DIR/bun-latest-version}"
+  RESOLVED=""
+  if [[ -n "$LATEST_CACHE_FILE" && -f "$LATEST_CACHE_FILE" ]]; then
+    CACHE_AGE=$(( $(date +%s) - $(date -r "$LATEST_CACHE_FILE" +%s 2>/dev/null || echo "0") ))
+    if [ "$CACHE_AGE" -lt 3600 ]; then
+      RESOLVED="$(cat "$LATEST_CACHE_FILE" | tr -d '[:space:]')"
+      puts_step "Using cached latest version: $RESOLVED"
+    fi
+  fi
+  if [[ -z "$RESOLVED" ]]; then
+    puts_step "Resolving latest Bun version from GitHub..."
+    RESOLVED=$(curl -fsSL \
+      --connect-timeout 10 \
+      --max-time 30 \
+      --retry 3 \
+      --retry-delay 2 \
+      "https://api.github.com/repos/oven-sh/bun/releases/latest" \
+      | jq -r '.tag_name' \
+      | grep -oE "[0-9]+\.[0-9]+\.[0-9]+" \
+      | head -n 1)
+    if [[ -z "$RESOLVED" ]]; then
+      puts_warn "Failed to resolve latest Bun version from GitHub API."
+      puts_warn "Pin a version with BUN_VERSION config var or .bun-version file."
+      exit 1
+    fi
+    # Cache the resolution
+    if [[ -n "$LATEST_CACHE_FILE" ]]; then
+      echo "v${RESOLVED}" > "$LATEST_CACHE_FILE"
+    fi
+  fi
+  BUN_VERSION="v${RESOLVED#v}"
+  puts_header "Bun $BUN_VERSION (latest)"
+fi
+
+# -----------------------------------------------------------------------
+# Download or Restore Bun Binary (direct from GitHub Releases)
+# -----------------------------------------------------------------------
+# Detect architecture — Heroku dynos are typically x64, but newer stacks
+# may use aarch64.
+ARCH=$(uname -m)
+case "$ARCH" in
+  x86_64)  BUN_ARCH="x64" ;;
+  aarch64) BUN_ARCH="aarch64" ;;
+  *)
+    puts_warn "Unsupported architecture: $ARCH"
+    exit 1
+    ;;
+esac
+BUN_RELEASE_TAG="bun-${BUN_VERSION}"
+BUN_ARTIFACT="bun-linux-${BUN_ARCH}.zip"
+BUN_DOWNLOAD_URL="https://github.com/oven-sh/bun/releases/download/${BUN_RELEASE_TAG}/${BUN_ARTIFACT}"
+
+if [[ -n "$CACHE_DIR" && -d "$CACHE_DIR/bun-bin-cache/$BUN_VERSION" ]]; then
   puts_step "Restoring Bun $BUN_VERSION from cache..."
   cp -R "$CACHE_DIR/bun-bin-cache/$BUN_VERSION/." "$BUN_INSTALL/bin/"
 else
-  puts_step "Downloading and installing Bun..."
-  BUN_INSTALLER=$(mktemp)
-  trap 'rm -f "$BUN_INSTALLER"' EXIT
-  curl -fsSL \
+  puts_step "Downloading Bun $BUN_VERSION for linux-${BUN_ARCH}..."
+  BUN_ZIP=$(mktemp)
+  BUN_EXTRACT_DIR=$(mktemp -d)
+  trap 'rm -f "$BUN_ZIP"; rm -rf "$BUN_EXTRACT_DIR"' EXIT
+
+  HTTP_CODE=$(curl -fsSL \
     --connect-timeout 10 \
     --max-time 120 \
     --retry 3 \
     --retry-delay 2 \
     --retry-connrefused \
-    -o "$BUN_INSTALLER" \
-    https://bun.sh/install
-  bash "$BUN_INSTALLER" ${BUN_INSTALL_VERSION:+$BUN_INSTALL_VERSION}
-    
+    -w "%{http_code}" \
+    -o "$BUN_ZIP" \
+    "$BUN_DOWNLOAD_URL" 2>/dev/null || true)
+
+  if [[ "$HTTP_CODE" != "200" ]] || [[ ! -s "$BUN_ZIP" ]]; then
+    puts_warn "Failed to download Bun $BUN_VERSION (HTTP $HTTP_CODE)."
+    puts_warn "URL: $BUN_DOWNLOAD_URL"
+    puts_warn "Verify the version exists: https://github.com/oven-sh/bun/releases"
+    exit 1
+  fi
+
+  # Validate that we got a zip file, not an error page
+  if ! file "$BUN_ZIP" 2>/dev/null | grep -qi "zip"; then
+    # Fallback: try unzip test if 'file' command is unavailable
+    if ! unzip -tq "$BUN_ZIP" &>/dev/null; then
+      puts_warn "Downloaded file is not a valid zip archive. Aborting."
+      exit 1
+    fi
+  fi
+
+  unzip -qo "$BUN_ZIP" -d "$BUN_EXTRACT_DIR"
+
+  # The zip contains a directory like bun-linux-x64/bun
+  if [[ -f "$BUN_EXTRACT_DIR/bun-linux-${BUN_ARCH}/bun" ]]; then
+    cp "$BUN_EXTRACT_DIR/bun-linux-${BUN_ARCH}/bun" "$BUN_INSTALL/bin/bun"
+    chmod +x "$BUN_INSTALL/bin/bun"
+  else
+    puts_warn "Unexpected archive structure — could not find bun binary."
+    puts_warn "Contents: $(ls -la "$BUN_EXTRACT_DIR/" 2>/dev/null)"
+    exit 1
+  fi
+
   # Save to cache for future builds
-  if [[ -n "$CACHE_DIR" && -n "$BUN_VERSION" ]]; then
+  if [[ -n "$CACHE_DIR" ]]; then
+    # Clean stale binary versions from cache before saving
+    if [ -d "$CACHE_DIR/bun-bin-cache" ]; then
+      for cached_ver in "$CACHE_DIR/bun-bin-cache/"*/; do
+        [ -d "$cached_ver" ] || continue
+        ver_name=$(basename "$cached_ver")
+        if [[ "$ver_name" != "$BUN_VERSION" ]]; then
+          rm -rf "$cached_ver"
+        fi
+      done
+    fi
     mkdir -p "$CACHE_DIR/bun-bin-cache/$BUN_VERSION"
     cp -R "$BUN_INSTALL/bin/." "$CACHE_DIR/bun-bin-cache/$BUN_VERSION/"
   fi
@@ -151,7 +266,7 @@ puts_step "Installed Bun $(bun --version)"
 # -----------------------------------------------------------------------
 PROFILE_PATH="$BUILD_DIR/.profile.d/bun.sh"
 mkdir -p "$(dirname "$PROFILE_PATH")"
-echo 'export PATH="$HOME/.heroku/bin:$PATH"' >> "$PROFILE_PATH"
+echo 'export PATH="$HOME/.heroku/bin:$PATH"' > "$PROFILE_PATH"
 echo 'export BUN_INSTALL_CACHE_DIR="$HOME/.heroku/bun-pkg-cache"' >> "$PROFILE_PATH"
 echo "export NODE_ENV=\"\${NODE_ENV:-$NODE_ENV}\"" >> "$PROFILE_PATH"
 
@@ -162,9 +277,6 @@ echo "export NODE_ENV=\"\${NODE_ENV:-$NODE_ENV}\"" >> "$PROFILE_PATH"
   echo "export PATH=\"$BUILD_DIR/.heroku/bin:\$PATH\""
   echo "export BUN_INSTALL_CACHE_DIR=\"$BUN_INSTALL_CACHE_DIR\""
 } >> "$BP_DIR/export"
-
-# Switch to BUILD_DIR for all build steps
-cd "$BUILD_DIR"
 
 # -----------------------------------------------------------------------
 # Validate package.json before attempting to parse it
@@ -181,10 +293,12 @@ fi
 # -----------------------------------------------------------------------
 
 # 1. heroku-prebuild (runs BEFORE dependency install, per Heroku convention)
-has_heroku_prebuild_script=$(has_script "package.json" "heroku-prebuild")
-if [[ "${has_heroku_prebuild_script}" == "true" && ! -f ".skip-bun-heroku-prebuild" ]]; then
-  puts_step "Running heroku-prebuild..."
-  bun run heroku-prebuild
+if [[ -f "package.json" ]]; then
+  has_heroku_prebuild_script=$(has_script "package.json" "heroku-prebuild")
+  if [[ "${has_heroku_prebuild_script}" == "true" && ! -f ".skip-bun-heroku-prebuild" ]]; then
+    puts_step "Running heroku-prebuild..."
+    bun run heroku-prebuild
+  fi
 fi
 
 # 2. Install dependencies
@@ -193,7 +307,12 @@ if [[ -f "package.json" && ! -f ".skip-bun-install" ]]; then
   # Use --frozen-lockfile in CI-like environments to ensure reproducibility.
   # Falls back to a regular install only when no lockfile is present.
   if [ -f "bun.lock" ] || [ -f "bun.lockb" ]; then
-    bun install --frozen-lockfile
+    if ! bun install --frozen-lockfile; then
+      puts_warn "Dependency install failed with --frozen-lockfile."
+      puts_warn "If your lockfile is out of date, run 'bun install' locally"
+      puts_warn "and commit the updated bun.lock / bun.lockb."
+      exit 1
+    fi
   else
     puts_warn "No lockfile found — running bun install without --frozen-lockfile."
     bun install
@@ -201,16 +320,20 @@ if [[ -f "package.json" && ! -f ".skip-bun-install" ]]; then
 fi
 
 # 3. build
-has_build_script=$(has_script "package.json" "build")
-if [[ "${has_build_script}" == "true" && ! -f ".skip-bun-build" ]]; then
-  puts_step "Building application..."
-  bun run build
-  puts_step "Build complete."
+if [[ -f "package.json" ]]; then
+  has_build_script=$(has_script "package.json" "build")
+  if [[ "${has_build_script}" == "true" && ! -f ".skip-bun-build" ]]; then
+    puts_step "Building application..."
+    bun run build
+    puts_step "Build complete."
+  fi
 fi
 
 # 4. heroku-postbuild
-has_heroku_postbuild_script=$(has_script "package.json" "heroku-postbuild")
-if [[ "${has_heroku_postbuild_script}" == "true" && ! -f ".skip-bun-heroku-postbuild" ]]; then
-  puts_step "Running heroku-postbuild..."
-  bun run heroku-postbuild
+if [[ -f "package.json" ]]; then
+  has_heroku_postbuild_script=$(has_script "package.json" "heroku-postbuild")
+  if [[ "${has_heroku_postbuild_script}" == "true" && ! -f ".skip-bun-heroku-postbuild" ]]; then
+    puts_step "Running heroku-postbuild..."
+    bun run heroku-postbuild
+  fi
 fi

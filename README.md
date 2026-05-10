@@ -55,23 +55,26 @@ Pin a specific Bun version using **one** of the following methods (listed in pri
 |--------|---------|
 | Heroku Config Var `BUN_VERSION` | `heroku config:set BUN_VERSION=1.3.13` |
 | `.bun-version` file in project root | `1.3.13` or `v1.3.13` |
+| `engines.bun` in `package.json` | `"engines": { "bun": "1.3.13" }` |
 | `runtime.bun.txt` file in project root | `1.3.13` |
-| `runtime.txt` file | `1.3.13` (No `v` prefix allowed) |
+| `runtime.txt` file | `1.3.13` or `bun-1.3.13` |
 
-The version can be specified with or without a leading `v`, e.g. `v1.3.13` or `1.3.13` (except for `runtime.txt` which requires a bare version). Any [Bun release tag](https://github.com/oven-sh/bun/releases) is valid.
+The version can be specified with or without a leading `v`, e.g. `v1.3.13` or `1.3.13`. Any [Bun release tag](https://github.com/oven-sh/bun/releases) is valid.
+
+> **Note:** Only exact versions are supported. Semver ranges like `>=1.0.0` or `^1.3.0` in `engines.bun` will not be resolved and will cause the build to fail.
 
 > **Note:** Avoid using `runtime.txt` if you have other buildpacks (e.g. Ruby or Python) that also use `runtime.txt` for their own version pinning. Use `.bun-version` or `BUN_VERSION` instead.
 
 ## Build scripts
 
-This buildpack automatically runs the following commands if defined in `package.json`:
+This buildpack automatically runs the following commands (in order) if defined in `package.json`:
 
-| Step | Command | Skip with |
-|------|---------|-----------|
-| Install | `bun install` | `.skip-bun-install` |
-| Prebuild | `bun run heroku-prebuild` | `.skip-bun-heroku-prebuild` |
-| Build | `bun run build` | `.skip-bun-build` |
-| Postbuild | `bun run heroku-postbuild` | `.skip-bun-heroku-postbuild` |
+| Order | Step | Command | Skip with |
+|-------|------|---------|-----------|
+| 1 | Prebuild | `bun run heroku-prebuild` | `.skip-bun-heroku-prebuild` |
+| 2 | Install | `bun install` | `.skip-bun-install` |
+| 3 | Build | `bun run build` | `.skip-bun-build` |
+| 4 | Postbuild | `bun run heroku-postbuild` | `.skip-bun-heroku-postbuild` |
 
 ### Reproducible installs
 
