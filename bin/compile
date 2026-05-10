@@ -97,22 +97,46 @@ fi
 # inside Heroku's CACHE_DIR for persistence across builds.
 # -----------------------------------------------------------------------
 export BUN_INSTALL="$HEROKU_DIR"
+mkdir -p "$BUN_INSTALL/bin"
 
 if [[ -n "$CACHE_DIR" ]]; then
   export BUN_INSTALL_CACHE_DIR="$CACHE_DIR/bun-pkg-cache"
+  
+  # Manage package cache size (prevents Heroku 1GB cache limit violations)
+  if [ -d "$BUN_INSTALL_CACHE_DIR" ]; then
+    CACHE_SIZE=$(du -sm "$BUN_INSTALL_CACHE_DIR" 2>/dev/null | cut -f1 || echo "0")
+    if [ "$CACHE_SIZE" -gt 300 ]; then
+      puts_warn "Bun package cache exceeded 300MB. Clearing to prevent Heroku cache bloat."
+      rm -rf "$BUN_INSTALL_CACHE_DIR"
+    fi
+  fi
 else
   export BUN_INSTALL_CACHE_DIR="$HEROKU_DIR/bun-pkg-cache"
 fi
 mkdir -p "$BUN_INSTALL_CACHE_DIR"
 
-puts_step "Downloading and installing Bun..."
-curl -fsSL \
-  --connect-timeout 10 \
-  --max-time 120 \
-  --retry 3 \
-  --retry-delay 2 \
-  --retry-connrefused \
-  https://bun.sh/install | bash ${BUN_INSTALL_VERSION:+$BUN_INSTALL_VERSION}
+# -----------------------------------------------------------------------
+# Download or Restore Bun Binary
+# -----------------------------------------------------------------------
+if [[ -n "$CACHE_DIR" && -n "$BUN_VERSION" && -d "$CACHE_DIR/bun-bin-cache/$BUN_VERSION" ]]; then
+  puts_step "Restoring Bun $BUN_VERSION from cache..."
+  cp -R "$CACHE_DIR/bun-bin-cache/$BUN_VERSION/." "$BUN_INSTALL/bin/"
+else
+  puts_step "Downloading and installing Bun..."
+  curl -fsSL \
+    --connect-timeout 10 \
+    --max-time 120 \
+    --retry 3 \
+    --retry-delay 2 \
+    --retry-connrefused \
+    https://bun.sh/install | bash ${BUN_INSTALL_VERSION:+$BUN_INSTALL_VERSION}
+    
+  # Save to cache for future builds
+  if [[ -n "$CACHE_DIR" && -n "$BUN_VERSION" ]]; then
+    mkdir -p "$CACHE_DIR/bun-bin-cache/$BUN_VERSION"
+    cp -R "$BUN_INSTALL/bin/." "$CACHE_DIR/bun-bin-cache/$BUN_VERSION/"
+  fi
+fi
 
 export PATH="$BUN_INSTALL/bin:$PATH"
 
