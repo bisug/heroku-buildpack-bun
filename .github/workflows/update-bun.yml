@@ -22,8 +22,8 @@ jobs:
           # Fetch the latest release from the GitHub API
           LATEST_TAG=$(curl -sL https://api.github.com/repos/oven-sh/bun/releases/latest | jq -r .tag_name)
           
-          # The tag format is usually 'bun-v1.3.13'. Strip the 'bun-v' prefix to get '1.3.13'
-          LATEST_VERSION=${LATEST_TAG#bun-v}
+          # Robustly extract just the semantic version number (e.g., 1.3.13) regardless of prefix
+          LATEST_VERSION=$(echo "$LATEST_TAG" | grep -oE "[0-9]+\.[0-9]+\.[0-9]+" | head -n 1)
           
           echo "latest_version=$LATEST_VERSION" >> $GITHUB_OUTPUT
           echo "Found latest Bun version: $LATEST_VERSION"
