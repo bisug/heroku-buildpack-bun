@@ -13,11 +13,35 @@ Based on the [Deno buildpack](https://github.com/chibat/heroku-buildpack-deno) a
 
 To add the buildpack to your Heroku app, visit the settings page for your app on Heroku, then under **Buildpacks** add:
 
-```
+```text
 https://github.com/bisug/heroku-buildpack-bun
 ```
 
-You'll either need a [`Procfile`](https://devcenter.heroku.com/articles/procfile) in the root folder of your app (e.g. `web: bun index.js`), or a `package.json` with a `start` script.
+### Detection
+
+The buildpack will automatically detect your project as a Bun app if any of the following are present in your project's root:
+
+**Tier 1 (Bun-exclusive files):**
+- `bun.lock` or `bun.lockb`
+- `.bun-version` or `runtime.bun.txt`
+- `bunfig.toml` or `.bunfig.toml`
+
+**Tier 2 (`package.json` config):**
+- `"packageManager": "bun@..."`
+- `"engines": { "bun": "..." }`
+
+### Defining Process Types
+
+If you have a [`Procfile`](https://devcenter.heroku.com/articles/procfile) (e.g. `web: bun index.js`), Heroku will use it.
+
+If no `Procfile` is present, the buildpack will automatically create default process types based on the scripts in your `package.json`:
+
+- **`web` dyno:** Looks for a `"web"` script, then a `"start"` script, and finally scans for common entry files (like `index.ts`, `server.ts`, etc.).
+- **`worker` dyno:** Looks for a `"worker"` script.
+- **`release` dyno:** Looks for a `"release"` script.
+- **`scheduler` dyno:** Looks for a `"scheduler"` script.
+
+For example, to run a worker-only app without a Procfile, simply define a `"worker"` script in your `package.json` and deploy!
 
 ## Pinning a Bun version
 
@@ -25,12 +49,12 @@ Pin a specific Bun version using **one** of the following methods (listed in pri
 
 | Method | Example |
 |--------|---------|
-| Heroku Config Var `BUN_VERSION` | `heroku config:set BUN_VERSION=1.1.20` |
-| `.bun-version` file in project root | `1.1.20` or `v1.1.20` |
-| `runtime.bun.txt` file in project root | `1.1.20` |
-| `runtime.txt` file (bare version only) | `1.1.20` |
+| Heroku Config Var `BUN_VERSION` | `heroku config:set BUN_VERSION=1.3.13` |
+| `.bun-version` file in project root | `1.3.13` or `v1.3.13` |
+| `runtime.bun.txt` file in project root | `1.3.13` |
+| `runtime.txt` file (bare version only) | `1.3.13` |
 
-The version can be specified with or without a leading `v`, e.g. `v1.1.20` or `1.1.20`. Any [Bun release tag](https://github.com/oven-sh/bun/releases) is valid.
+The version can be specified with or without a leading `v`, e.g. `v1.3.13` or `1.3.13`. Any [Bun release tag](https://github.com/oven-sh/bun/releases) is valid.
 
 > **Note:** Avoid using `runtime.txt` if you have other buildpacks (e.g. Ruby or Python) that also use `runtime.txt` for their own version pinning. Use `.bun-version` or `BUN_VERSION` instead.
 

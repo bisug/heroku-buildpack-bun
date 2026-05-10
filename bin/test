@@ -51,7 +51,7 @@ rm -rf "$tmp_pkg"
 
 # 5. detect accepts a directory with .bun-version
 tmp_bun=$(mktemp -d)
-echo 'v1.1.20' > "$tmp_bun/.bun-version"
+echo 'v1.3.13' > "$tmp_bun/.bun-version"
 if "$BP_DIR/bin/detect" "$tmp_bun" &>/dev/null; then
   pass "detect correctly accepts directory with .bun-version"
 else
