@@ -100,13 +100,24 @@ if [[ -n "$BUN_VERSION" ]]; then
   if [[ "$BUN_VERSION" =~ ^[0-9] ]]; then
     BUN_VERSION="v${BUN_VERSION}"
   fi
-  # Validate version format to prevent injection via malicious version files
-  if [[ ! "$BUN_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
-    puts_warn "Invalid Bun version format: $BUN_VERSION"
-    puts_warn "Expected format: v1.2.3 or v1.2.3-canary.1"
-    exit 1
+
+  # Skip validation for special keywords
+  if [[ "$BUN_VERSION" != "latest" ]] && [[ "$BUN_VERSION" != "canary" ]]; then
+    # Validate version format to prevent injection via malicious version files
+    if [[ ! "$BUN_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
+      puts_warn "Invalid Bun version format: $BUN_VERSION"
+      puts_warn "Expected format: v1.2.3 or v1.2.3-canary.1"
+      exit 1
+    fi
   fi
-  puts_header "Bun $BUN_VERSION"
+  
+  if [[ "$BUN_VERSION" == "latest" ]]; then
+    puts_header "Bun (latest)"
+  elif [[ "$BUN_VERSION" == "canary" ]]; then
+    puts_header "Bun (canary)"
+  else
+    puts_header "Bun $BUN_VERSION"
+  fi
 else
   puts_header "Bun (latest)"
 fi
@@ -137,12 +148,13 @@ fi
 mkdir -p "$BUN_INSTALL_CACHE_DIR"
 
 # -----------------------------------------------------------------------
-# Resolve latest version if not pinned
+# Resolve latest version if not pinned or if 'latest' is specified
 # -----------------------------------------------------------------------
-if [[ -z "$BUN_VERSION" ]]; then
+if [[ -z "$BUN_VERSION" ]] || [[ "$BUN_VERSION" == "latest" ]]; then
   # Check if we have a cached "latest" resolution less than 1 hour old
   LATEST_CACHE_FILE="${CACHE_DIR:+$CACHE_DIR/bun-latest-version}"
   RESOLVED=""
+  
   if [[ -n "$LATEST_CACHE_FILE" && -f "$LATEST_CACHE_FILE" ]]; then
     CACHE_AGE=$(( $(date +%s) - $(date -r "$LATEST_CACHE_FILE" +%s 2>/dev/null || echo "0") ))
     if [ "$CACHE_AGE" -lt 3600 ]; then
@@ -150,8 +162,10 @@ if [[ -z "$BUN_VERSION" ]]; then
       puts_step "Using cached latest version: $RESOLVED"
     fi
   fi
+  
   if [[ -z "$RESOLVED" ]]; then
     puts_step "Resolving latest Bun version from GitHub..."
+    # Attempt to resolve via GitHub API
     RESOLVED=$(curl -fsSL \
       --connect-timeout 10 \
       --max-time 30 \
@@ -160,19 +174,25 @@ if [[ -z "$BUN_VERSION" ]]; then
       "https://api.github.com/repos/oven-sh/bun/releases/latest" \
       | jq -r '.tag_name' \
       | grep -oE "[0-9]+\.[0-9]+\.[0-9]+" \
-      | head -n 1)
+      | head -n 1 || echo "")
+    
     if [[ -z "$RESOLVED" ]]; then
       puts_warn "Failed to resolve latest Bun version from GitHub API."
-      puts_warn "Pin a version with BUN_VERSION config var or .bun-version file."
-      exit 1
+      # Fallback to a hardcoded "last known good" version if no cache exists
+      RESOLVED="1.3.14" 
+      puts_step "Falling back to default version: v$RESOLVED"
     fi
+    
     # Cache the resolution
     if [[ -n "$LATEST_CACHE_FILE" ]]; then
-      echo "v${RESOLVED}" > "$LATEST_CACHE_FILE"
+      echo "v${RESOLVED#v}" > "$LATEST_CACHE_FILE"
     fi
   fi
   BUN_VERSION="v${RESOLVED#v}"
   puts_header "Bun $BUN_VERSION (latest)"
+elif [[ "$BUN_VERSION" == "canary" ]]; then
+  # For canary, we don't resolve a semantic version, we just use the 'canary' tag
+  puts_header "Bun canary"
 fi
 
 # -----------------------------------------------------------------------
@@ -189,7 +209,11 @@ case "$ARCH" in
     exit 1
     ;;
 esac
-BUN_RELEASE_TAG="bun-${BUN_VERSION}"
+if [[ "$BUN_VERSION" == "canary" ]]; then
+  BUN_RELEASE_TAG="canary"
+else
+  BUN_RELEASE_TAG="bun-${BUN_VERSION}"
+fi
 BUN_ARTIFACT="bun-linux-${BUN_ARCH}.zip"
 BUN_DOWNLOAD_URL="https://github.com/oven-sh/bun/releases/download/${BUN_RELEASE_TAG}/${BUN_ARTIFACT}"
 
