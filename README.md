@@ -4,7 +4,7 @@
 
 # heroku-buildpack-bun
 
-Heroku buildpack for [Bun.js](https://bun.sh/) — allows you to run Bun on Heroku.
+Heroku buildpack for [Bun.js](https://bun.sh/) - allows you to run Bun on Heroku.
 
 > **Note:** This is an unofficial community buildpack for Bun.
 
@@ -19,6 +19,7 @@ Heroku buildpack for [Bun.js](https://bun.sh/) — allows you to run Bun on Hero
 
 - `heroku-22`
 - `heroku-24`
+- `heroku-26`
 
 ## How to use
 
@@ -72,12 +73,12 @@ Pin a specific Bun version using **one** of the following methods (listed in pri
 | Method | Example |
 |--------|---------|
 | Heroku Config Var `BUN_VERSION` | `heroku config:set BUN_VERSION=1.3.13` |
-| `.bun-version` file in project root | `1.3.13` or `v1.3.13` |
+| `.bun-version` file in project root | `1.3.13`, `v1.3.13`, or `bun-v1.3.13` |
 | `engines.bun` in `package.json` | `"engines": { "bun": "1.3.13" }` |
 | `runtime.bun.txt` file in project root | `1.3.13` |
 | `runtime.txt` file | `1.3.13` or `bun-1.3.13` |
 
-The version can be specified with or without a leading `v`, e.g. `v1.3.13` or `1.3.13`. Any [Bun release tag](https://github.com/oven-sh/bun/releases) is valid.
+The version can be specified as `1.3.13`, `v1.3.13`, or Bun's GitHub tag format `bun-v1.3.13`. The special values `latest` and `canary` are also supported.
 
 > **Note:** Only exact versions are supported. Semver ranges like `>=1.0.0` or `^1.3.0` in `engines.bun` will not be resolved and will cause the build to fail.
 
@@ -89,10 +90,10 @@ This buildpack automatically runs the following commands (in order) if defined i
 
 | Order | Step | Command | Skip with |
 |-------|------|---------|-----------|
-| 1 | Prebuild | `bun run heroku-prebuild` | `.skip-bun-heroku-prebuild` |
-| 2 | Install | `bun install` | `.skip-bun-install` |
-| 3 | Build | `bun run build` | `.skip-bun-build` |
-| 4 | Postbuild | `bun run heroku-postbuild` | `.skip-bun-heroku-postbuild` |
+| 1 | Prebuild | `bun run heroku-prebuild` | `.skip-bun-heroku-prebuild` or `BUN_SKIP_HEROKU_PREBUILD=true` |
+| 2 | Install | `bun install` | `.skip-bun-install` or `BUN_SKIP_INSTALL=true` |
+| 3 | Build | `bun run build` | `.skip-bun-build` or `BUN_SKIP_BUILD=true` |
+| 4 | Postbuild | `bun run heroku-postbuild` | `.skip-bun-heroku-postbuild` or `BUN_SKIP_HEROKU_POSTBUILD=true` |
 
 ### Reproducible installs
 
@@ -123,6 +124,19 @@ By default, the buildpack sets `NODE_ENV=production` during the build and at run
 heroku config:set NODE_ENV=development
 ```
 
+Buildpack-specific configuration:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BUN_VERSION` | `latest` | Exact Bun version, `latest`, or `canary`. |
+| `BUN_BINARY_VARIANT` | `standard` | Use `baseline` on x64 if your dyno reports an illegal instruction error. |
+| `BUN_LATEST_TTL_SECONDS` | `3600` | Cache TTL for resolving `latest` from GitHub. |
+| `BUN_INSTALL_FLAGS` | empty | Extra flags appended to `bun install`, for example `--ignore-scripts`. |
+| `BUN_SKIP_INSTALL` | `false` | Skip dependency installation. |
+| `BUN_SKIP_BUILD` | `false` | Skip the `build` script. |
+| `BUN_SKIP_HEROKU_PREBUILD` | `false` | Skip the `heroku-prebuild` script. |
+| `BUN_SKIP_HEROKU_POSTBUILD` | `false` | Skip the `heroku-postbuild` script. |
+
 ## Private Packages & Authentication
 
 If your project depends on private packages (e.g., from npm Enterprise or GitHub Packages), you can authenticate securely without committing secrets to your codebase.
@@ -152,5 +166,12 @@ If you see an error about a lockfile mismatch during `bun install`, it means you
 ### 2. App crashes with R10 (Boot timeout)
 Ensure you are binding your web server to the `$PORT` environment variable provided by Heroku (as shown in the port binding example), and not hardcoding a specific port like `3000`.
 
-### 3. Reporting Issues
+### 3. `Illegal instruction` when starting Bun
+Set the x64 baseline binary variant and redeploy:
+
+```bash
+heroku config:set BUN_BINARY_VARIANT=baseline
+```
+
+### 4. Reporting Issues
 If you encounter a bug within the buildpack itself, please use the [Issues tab](https://github.com/bisug/heroku-buildpack-bun/issues) to report it. Provide your Heroku build log to help isolate the issue.

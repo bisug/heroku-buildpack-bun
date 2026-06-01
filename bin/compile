@@ -2,362 +2,466 @@
 # bin/compile <build-dir> <cache-dir> <env-dir>
 # $HOME: /app
 
-# -e          exit immediately on error
-# -u          treat unset variables as errors
-# -o pipefail propagate errors through pipes
 set -euo pipefail
 
-### Global error handler — provides context on unexpected failures
-on_error() {
-  puts_warn "Build failed — see above for details."
-  puts_warn "If this looks like a buildpack bug, please open an issue:"
-  puts_warn "https://github.com/bisug/heroku-buildpack-bun/issues"
-}
-trap on_error ERR
-
-BUILD_DIR="${1:-.}"
-CACHE_DIR="${2:-}"
-ENV_DIR="${3:-}"
-BP_DIR=$(cd "$(dirname "$0")"; cd ..; pwd)
-
-# Initialize variables early to satisfy set -u
-BUN_VERSION=""
-NODE_ENV=""
-
-### Logging helpers (Heroku build log style)
 puts_header() { echo "-----> $*"; }
 puts_step()   { echo "       $*"; }
 puts_warn()   { echo " !     $*" >&2; }
 
-### Load dependencies
-source "$BP_DIR/lib/json.sh"
+on_error() {
+  local exit_code=$?
+  local line="${1:-unknown}"
+  puts_warn "Build failed near line ${line} (exit code ${exit_code})."
+  puts_warn "If this looks like a buildpack bug, please open an issue:"
+  puts_warn "https://github.com/bisug/heroku-buildpack-bun/issues"
+  exit "$exit_code"
+}
+trap 'on_error "$LINENO"' ERR
 
-### Verify required tools are present on the build dyno
-if ! command -v jq &>/dev/null; then
-  puts_warn "jq is required but not found on this stack."
+BUILD_DIR="${1:-}"
+CACHE_DIR="${2:-}"
+ENV_DIR="${3:-}"
+BP_DIR=$(cd "$(dirname "$0")"; cd ..; pwd)
+
+if [[ -z "$BUILD_DIR" || ! -d "$BUILD_DIR" ]]; then
+  puts_warn "Usage: bin/compile BUILD_DIR CACHE_DIR ENV_DIR"
   exit 1
 fi
 
-if ! command -v unzip &>/dev/null; then
-  puts_warn "unzip is required to install Bun but was not found on this stack."
+source "$BP_DIR/lib/json.sh"
+
+missing_tools=()
+for tool in curl jq unzip; do
+  if ! command -v "$tool" >/dev/null 2>&1; then
+    missing_tools+=("$tool")
+  fi
+done
+
+if (( ${#missing_tools[@]} > 0 )); then
+  puts_warn "Missing required tool(s): ${missing_tools[*]}"
+  puts_warn "This buildpack supports the Heroku common runtime stacks where these tools are available."
   exit 1
 fi
 
 cd "$BUILD_DIR"
 
-# Ensure .heroku directory exists
 HEROKU_DIR="$BUILD_DIR/.heroku"
-mkdir -p "$HEROKU_DIR"
-
-# Export the content of ENV_DIR into the environment.
-# Uses glob expansion (not ls) to safely handle filenames.
-if [ -d "$ENV_DIR" ]; then
-  for e in "$ENV_DIR/"*; do
-    [ -f "$e" ] || continue
-    key=$(basename "$e")
-    # Deny-list: never overwrite critical shell/Heroku internals
-    case "$key" in
-      PATH|HOME|GIT_DIR|BUILDPACK_URL|SOURCE_VERSION) continue ;;
-    esac
-    export "$key=$(cat "$e")"
-  done
+mkdir -p "$HEROKU_DIR/bin"
+if [[ -n "$CACHE_DIR" ]]; then
+  mkdir -p "$CACHE_DIR"
 fi
 
-# -----------------------------------------------------------------------
-# Node environment setup
-# -----------------------------------------------------------------------
-# Default to production. This enables huge performance gains in React/Next/Express.
+# Keep the buildpack export script deterministic for multi-buildpack builds.
+: > "$BP_DIR/export"
+
+cleanup_paths=()
+cleanup() {
+  local path
+  for path in "${cleanup_paths[@]:-}"; do
+    if [[ -n "$path" ]]; then
+      rm -rf "$path"
+    fi
+  done
+}
+trap cleanup EXIT
+
+is_truthy() {
+  case "${1:-}" in
+    1|true|TRUE|yes|YES|on|ON) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+skip_requested() {
+  local env_name="$1"
+  local marker_file="$2"
+  [[ -f "$marker_file" ]] || is_truthy "${!env_name:-}"
+}
+
+export_env_dir() {
+  local env_dir="$1"
+  local entry key
+
+  [[ -d "$env_dir" ]] || return 0
+
+  for entry in "$env_dir/"*; do
+    [[ -f "$entry" ]] || continue
+    key=$(basename "$entry")
+
+    if [[ ! "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+      puts_warn "Skipping invalid config var name from ENV_DIR: $key"
+      continue
+    fi
+
+    case "$key" in
+      PATH|HOME|GIT_DIR|CPATH|CPPATH|LD_PRELOAD|LIBRARY_PATH|LD_LIBRARY_PATH|BASH_ENV|ENV|SHELLOPTS|BUILDPACK_URL|SOURCE_VERSION)
+        continue
+        ;;
+    esac
+
+    export "$key=$(cat "$entry")"
+  done
+}
+
+normalize_bun_version() {
+  local raw="$1"
+
+  raw=$(printf "%s" "$raw" | tr -d '[:space:]')
+  case "$raw" in
+    "") return 1 ;;
+    latest|canary)
+      printf "%s\n" "$raw"
+      return 0
+      ;;
+    bun-v*|bun-[0-9]*)
+      raw="${raw#bun-}"
+      ;;
+  esac
+
+  if [[ "$raw" =~ ^[0-9] ]]; then
+    raw="v${raw}"
+  fi
+
+  if [[ "$raw" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
+    printf "%s\n" "$raw"
+    return 0
+  fi
+
+  return 1
+}
+
+resolve_latest_bun_version() {
+  local latest_cache_file="${CACHE_DIR:+$CACHE_DIR/bun-latest-version}"
+  local cache_ttl="${BUN_LATEST_TTL_SECONDS:-3600}"
+  local cache_age resolved tag
+
+  if [[ ! "$cache_ttl" =~ ^[0-9]+$ ]]; then
+    puts_warn "Invalid BUN_LATEST_TTL_SECONDS value: $cache_ttl"
+    exit 1
+  fi
+
+  if [[ -n "$latest_cache_file" && -f "$latest_cache_file" ]]; then
+    cache_age=$(( $(date +%s) - $(date -r "$latest_cache_file" +%s 2>/dev/null || echo "0") ))
+    if (( cache_age < cache_ttl )); then
+      resolved=$(cat "$latest_cache_file" | tr -d '[:space:]')
+      if resolved=$(normalize_bun_version "$resolved"); then
+        puts_step "Using cached latest Bun version: $resolved" >&2
+        printf "%s\n" "$resolved"
+        return 0
+      fi
+    fi
+  fi
+
+  puts_step "Resolving latest Bun version from GitHub..." >&2
+  tag=$(curl -fsSL \
+    --connect-timeout 10 \
+    --max-time 30 \
+    --retry 3 \
+    --retry-delay 2 \
+    "https://api.github.com/repos/oven-sh/bun/releases/latest" \
+    | jq -er '.tag_name' 2>/dev/null || true)
+
+  if [[ -n "$tag" ]] && resolved=$(normalize_bun_version "$tag"); then
+    if [[ -n "$latest_cache_file" ]]; then
+      printf "%s\n" "$resolved" > "$latest_cache_file"
+    fi
+    printf "%s\n" "$resolved"
+    return 0
+  fi
+
+  if [[ -n "$latest_cache_file" && -f "$latest_cache_file" ]]; then
+    resolved=$(cat "$latest_cache_file" | tr -d '[:space:]')
+    if resolved=$(normalize_bun_version "$resolved"); then
+      puts_warn "Could not refresh latest Bun version; using stale cached value: $resolved"
+      printf "%s\n" "$resolved"
+      return 0
+    fi
+  fi
+
+  puts_warn "Unable to resolve the latest Bun version from GitHub."
+  puts_warn "Pin BUN_VERSION, .bun-version, runtime.bun.txt, or package.json engines.bun to an exact version."
+  exit 1
+}
+
+run_package_script() {
+  local script_name="$1"
+  local label="$2"
+  local env_skip="$3"
+  local file_skip="$4"
+
+  if [[ -f "package.json" && "$(has_script "package.json" "$script_name")" == "true" ]]; then
+    if skip_requested "$env_skip" "$file_skip"; then
+      puts_step "Skipping $script_name."
+      return 0
+    fi
+
+    puts_step "$label..."
+    bun run "$script_name"
+  fi
+}
+
+export_env_dir "$ENV_DIR"
+
 export NODE_ENV="${NODE_ENV:-production}"
 puts_step "NODE_ENV is set to $NODE_ENV"
 
-# -----------------------------------------------------------------------
-# Bun version resolution
-# Priority: Config Var (BUN_VERSION) > .bun-version > runtime.bun.txt
-#           > runtime.txt (only if it looks like a bare version) > latest
-# -----------------------------------------------------------------------
-if [[ -n "$BUN_VERSION" ]]; then
-  puts_step "Using BUN_VERSION from config var: $BUN_VERSION"
-elif [ -f "$BUILD_DIR/.bun-version" ]; then
-  BUN_VERSION="$(cat "$BUILD_DIR/.bun-version" | tr -d '[:space:]')"
-elif [ -f "$BUILD_DIR/package.json" ] && jq -e '.engines.bun' "$BUILD_DIR/package.json" >/dev/null 2>&1; then
-  BUN_VERSION="$(jq -r '.engines.bun' "$BUILD_DIR/package.json")"
-  puts_step "Using Bun version from package.json engines: $BUN_VERSION"
-elif [ -f "$BUILD_DIR/runtime.bun.txt" ]; then
-  BUN_VERSION="$(cat "$BUILD_DIR/runtime.bun.txt" | tr -d '[:space:]')"
-elif [ -f "$BUILD_DIR/runtime.txt" ]; then
-  _rt="$(cat "$BUILD_DIR/runtime.txt" | tr -d '[:space:]')"
-  # Guard against Ruby/Python/Node runtime strings (e.g. "ruby-3.2.0", "nodejs-18.x")
-  # Only accept if it looks like a version number or starts with 'bun-'
-  if [[ "$_rt" =~ ^[0-9] ]] || [[ "$_rt" =~ ^v[0-9] ]]; then
-    BUN_VERSION="$_rt"
-  elif [[ "$_rt" =~ ^bun- ]]; then
-    BUN_VERSION="${_rt#bun-}"
+if [[ -f "package.json" && "$(is_invalid_json_file "package.json")" == "true" ]]; then
+  puts_warn "package.json contains invalid JSON."
+  exit 1
+fi
+
+BUN_VERSION_RAW=""
+BUN_VERSION_SOURCE="default"
+
+if [[ -n "${BUN_VERSION:-}" ]]; then
+  BUN_VERSION_RAW="$BUN_VERSION"
+  BUN_VERSION_SOURCE="BUN_VERSION config var"
+elif [[ -f ".bun-version" ]]; then
+  BUN_VERSION_RAW=$(cat ".bun-version")
+  BUN_VERSION_SOURCE=".bun-version"
+elif [[ -f "package.json" ]] && jq -e '.engines? | objects | has("bun")' "package.json" >/dev/null 2>&1; then
+  BUN_VERSION_RAW=$(jq -r '.engines.bun' "package.json")
+  BUN_VERSION_SOURCE="package.json engines.bun"
+elif [[ -f "runtime.bun.txt" ]]; then
+  BUN_VERSION_RAW=$(cat "runtime.bun.txt")
+  BUN_VERSION_SOURCE="runtime.bun.txt"
+elif [[ -f "runtime.txt" ]]; then
+  runtime_value=$(cat "runtime.txt" | tr -d '[:space:]')
+  if [[ "$runtime_value" =~ ^([0-9]|v[0-9]|bun-) ]]; then
+    BUN_VERSION_RAW="$runtime_value"
+    BUN_VERSION_SOURCE="runtime.txt"
   fi
 fi
 
-if [[ -n "$BUN_VERSION" ]]; then
-  # Normalize: prepend v to bare numbers e.g. 1.0.19 -> v1.0.19
-  if [[ "$BUN_VERSION" =~ ^[0-9] ]]; then
-    BUN_VERSION="v${BUN_VERSION}"
-  fi
+if [[ -z "$BUN_VERSION_RAW" ]]; then
+  BUN_VERSION_RAW="latest"
+fi
 
-  # Skip validation for special keywords
-  if [[ "$BUN_VERSION" != "latest" ]] && [[ "$BUN_VERSION" != "canary" ]]; then
-    # Validate version format to prevent injection via malicious version files
-    if [[ ! "$BUN_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
-      puts_warn "Invalid Bun version format: $BUN_VERSION"
-      puts_warn "Expected format: v1.2.3 or v1.2.3-canary.1"
-      exit 1
-    fi
-  fi
-  
-  if [[ "$BUN_VERSION" == "latest" ]]; then
-    puts_header "Bun (latest)"
-  elif [[ "$BUN_VERSION" == "canary" ]]; then
-    puts_header "Bun (canary)"
-  else
-    puts_header "Bun $BUN_VERSION"
-  fi
+if ! BUN_VERSION=$(normalize_bun_version "$BUN_VERSION_RAW"); then
+  puts_warn "Invalid Bun version from $BUN_VERSION_SOURCE: $BUN_VERSION_RAW"
+  puts_warn "Use latest, canary, or an exact version like 1.3.13, v1.3.13, or bun-v1.3.13."
+  puts_warn "Semver ranges such as >=1.0.0 and ^1.3.0 are not supported."
+  exit 1
+fi
+
+if [[ "$BUN_VERSION" == "latest" ]]; then
+  BUN_VERSION=$(resolve_latest_bun_version)
+  puts_header "Bun $BUN_VERSION (latest)"
+elif [[ "$BUN_VERSION" == "canary" ]]; then
+  puts_header "Bun canary"
 else
-  puts_header "Bun (latest)"
+  puts_header "Bun $BUN_VERSION"
+  puts_step "Using Bun version from $BUN_VERSION_SOURCE."
 fi
 
-# -----------------------------------------------------------------------
-# Install Bun
-# BUN_INSTALL controls where the bun binary lands ($BUN_INSTALL/bin/bun).
-# BUN_INSTALL_CACHE_DIR redirects the global package cache so it lands
-# inside Heroku's CACHE_DIR for persistence across builds.
-# -----------------------------------------------------------------------
 export BUN_INSTALL="$HEROKU_DIR"
-mkdir -p "$BUN_INSTALL/bin"
 
 if [[ -n "$CACHE_DIR" ]]; then
   export BUN_INSTALL_CACHE_DIR="$CACHE_DIR/bun-pkg-cache"
-  
-  # Manage package cache size (prevents Heroku 1GB cache limit violations)
-  if [ -d "$BUN_INSTALL_CACHE_DIR" ]; then
-    CACHE_SIZE=$(du -sm "$BUN_INSTALL_CACHE_DIR" 2>/dev/null | cut -f1 || echo "0")
-    if [ "$CACHE_SIZE" -gt 800 ]; then
-      puts_warn "Bun package cache exceeded 800MB. Clearing to prevent Heroku cache bloat."
-      rm -rf "$BUN_INSTALL_CACHE_DIR"
-    fi
-  fi
 else
   export BUN_INSTALL_CACHE_DIR="$HEROKU_DIR/bun-pkg-cache"
 fi
+
+if [[ -d "$BUN_INSTALL_CACHE_DIR" ]]; then
+  cache_size=$(du -sm "$BUN_INSTALL_CACHE_DIR" 2>/dev/null | cut -f1 || echo "0")
+  if [[ "$cache_size" =~ ^[0-9]+$ && "$cache_size" -gt 800 ]]; then
+    puts_warn "Bun package cache exceeded 800MB. Clearing to prevent Heroku cache bloat."
+    rm -rf "$BUN_INSTALL_CACHE_DIR"
+  fi
+fi
 mkdir -p "$BUN_INSTALL_CACHE_DIR"
 
-# -----------------------------------------------------------------------
-# Resolve latest version if not pinned or if 'latest' is specified
-# -----------------------------------------------------------------------
-if [[ -z "$BUN_VERSION" ]] || [[ "$BUN_VERSION" == "latest" ]]; then
-  # Check if we have a cached "latest" resolution less than 1 hour old
-  LATEST_CACHE_FILE="${CACHE_DIR:+$CACHE_DIR/bun-latest-version}"
-  RESOLVED=""
-  
-  if [[ -n "$LATEST_CACHE_FILE" && -f "$LATEST_CACHE_FILE" ]]; then
-    CACHE_AGE=$(( $(date +%s) - $(date -r "$LATEST_CACHE_FILE" +%s 2>/dev/null || echo "0") ))
-    if [ "$CACHE_AGE" -lt 3600 ]; then
-      RESOLVED="$(cat "$LATEST_CACHE_FILE" | tr -d '[:space:]')"
-      puts_step "Using cached latest version: $RESOLVED"
-    fi
-  fi
-  
-  if [[ -z "$RESOLVED" ]]; then
-    puts_step "Resolving latest Bun version from GitHub..."
-    # Attempt to resolve via GitHub API
-    RESOLVED=$(curl -fsSL \
-      --connect-timeout 10 \
-      --max-time 30 \
-      --retry 3 \
-      --retry-delay 2 \
-      "https://api.github.com/repos/oven-sh/bun/releases/latest" \
-      | jq -r '.tag_name' \
-      | grep -oE "[0-9]+\.[0-9]+\.[0-9]+" \
-      | head -n 1 || echo "")
-    
-    if [[ -z "$RESOLVED" ]]; then
-      puts_warn "Failed to resolve latest Bun version from GitHub API."
-      # Fallback to a hardcoded "last known good" version if no cache exists
-      RESOLVED="1.3.14" 
-      puts_step "Falling back to default version: v$RESOLVED"
-    fi
-    
-    # Cache the resolution
-    if [[ -n "$LATEST_CACHE_FILE" ]]; then
-      echo "v${RESOLVED#v}" > "$LATEST_CACHE_FILE"
-    fi
-  fi
-  BUN_VERSION="v${RESOLVED#v}"
-  puts_header "Bun $BUN_VERSION (latest)"
-elif [[ "$BUN_VERSION" == "canary" ]]; then
-  # For canary, we don't resolve a semantic version, we just use the 'canary' tag
-  puts_header "Bun canary"
-fi
-
-# -----------------------------------------------------------------------
-# Download or Restore Bun Binary (direct from GitHub Releases)
-# -----------------------------------------------------------------------
-# Detect architecture — Heroku dynos are typically x64, but newer stacks
-# may use aarch64.
 ARCH=$(uname -m)
+BUN_BINARY_VARIANT="${BUN_BINARY_VARIANT:-standard}"
+case "$BUN_BINARY_VARIANT" in
+  standard|"") BUN_BINARY_VARIANT="standard" ;;
+  baseline) ;;
+  *)
+    puts_warn "Invalid BUN_BINARY_VARIANT value: $BUN_BINARY_VARIANT"
+    puts_warn "Supported values: standard, baseline"
+    exit 1
+    ;;
+esac
+
 case "$ARCH" in
-  x86_64)  BUN_ARCH="x64" ;;
-  aarch64) BUN_ARCH="aarch64" ;;
+  x86_64)
+    BUN_ARCH="x64"
+    if [[ "$BUN_BINARY_VARIANT" == "baseline" ]]; then
+      BUN_ARTIFACT_BASE="bun-linux-x64-baseline"
+    else
+      BUN_ARTIFACT_BASE="bun-linux-x64"
+    fi
+    ;;
+  aarch64|arm64)
+    BUN_ARCH="aarch64"
+    if [[ "$BUN_BINARY_VARIANT" == "baseline" ]]; then
+      puts_warn "BUN_BINARY_VARIANT=baseline is only available for x64."
+      exit 1
+    fi
+    BUN_ARTIFACT_BASE="bun-linux-aarch64"
+    ;;
   *)
     puts_warn "Unsupported architecture: $ARCH"
     exit 1
     ;;
 esac
+
+BUN_ARTIFACT="${BUN_ARTIFACT_BASE}.zip"
 if [[ "$BUN_VERSION" == "canary" ]]; then
   BUN_RELEASE_TAG="canary"
+  BUN_CACHEABLE_BINARY="false"
 else
   BUN_RELEASE_TAG="bun-${BUN_VERSION}"
+  BUN_CACHEABLE_BINARY="true"
 fi
-BUN_ARTIFACT="bun-linux-${BUN_ARCH}.zip"
 BUN_DOWNLOAD_URL="https://github.com/oven-sh/bun/releases/download/${BUN_RELEASE_TAG}/${BUN_ARTIFACT}"
 
-if [[ -n "$CACHE_DIR" && -d "$CACHE_DIR/bun-bin-cache/$BUN_VERSION" ]]; then
-  puts_step "Restoring Bun $BUN_VERSION from cache..."
-  cp -R "$CACHE_DIR/bun-bin-cache/$BUN_VERSION/." "$BUN_INSTALL/bin/"
-else
-  puts_step "Downloading Bun $BUN_VERSION for linux-${BUN_ARCH}..."
-  BUN_ZIP=$(mktemp)
-  BUN_EXTRACT_DIR=$(mktemp -d)
-  trap 'rm -f "$BUN_ZIP"; rm -rf "$BUN_EXTRACT_DIR"' EXIT
+download_bun() {
+  local bun_zip bun_extract_dir http_code
 
-  HTTP_CODE=$(curl -fsSL \
+  puts_step "Downloading Bun $BUN_VERSION for linux-${BUN_ARCH} (${BUN_BINARY_VARIANT})..."
+  bun_zip=$(mktemp)
+  bun_extract_dir=$(mktemp -d)
+  cleanup_paths+=("$bun_zip" "$bun_extract_dir")
+
+  http_code=$(curl -fsSL \
     --connect-timeout 10 \
     --max-time 120 \
     --retry 3 \
     --retry-delay 2 \
     --retry-connrefused \
     -w "%{http_code}" \
-    -o "$BUN_ZIP" \
+    -o "$bun_zip" \
     "$BUN_DOWNLOAD_URL" 2>/dev/null || true)
 
-  if [[ "$HTTP_CODE" != "200" ]] || [[ ! -s "$BUN_ZIP" ]]; then
-    puts_warn "Failed to download Bun $BUN_VERSION (HTTP $HTTP_CODE)."
+  if [[ "$http_code" != "200" || ! -s "$bun_zip" ]]; then
+    puts_warn "Failed to download Bun $BUN_VERSION (HTTP ${http_code:-unknown})."
     puts_warn "URL: $BUN_DOWNLOAD_URL"
-    puts_warn "Verify the version exists: https://github.com/oven-sh/bun/releases"
+    puts_warn "Verify the version and binary variant exist: https://github.com/oven-sh/bun/releases"
     exit 1
   fi
 
-  # Validate that we got a zip file, not an error page
-  if ! file "$BUN_ZIP" 2>/dev/null | grep -qi "zip"; then
-    # Fallback: try unzip test if 'file' command is unavailable
-    if ! unzip -tq "$BUN_ZIP" &>/dev/null; then
-      puts_warn "Downloaded file is not a valid zip archive. Aborting."
+  if command -v file >/dev/null 2>&1; then
+    if ! file "$bun_zip" | grep -qi "zip"; then
+      puts_warn "Downloaded file is not a zip archive."
       exit 1
     fi
-  fi
-
-  unzip -qo "$BUN_ZIP" -d "$BUN_EXTRACT_DIR"
-
-  # The zip contains a directory like bun-linux-x64/bun
-  if [[ -f "$BUN_EXTRACT_DIR/bun-linux-${BUN_ARCH}/bun" ]]; then
-    cp "$BUN_EXTRACT_DIR/bun-linux-${BUN_ARCH}/bun" "$BUN_INSTALL/bin/bun"
-    chmod +x "$BUN_INSTALL/bin/bun"
-  else
-    puts_warn "Unexpected archive structure — could not find bun binary."
-    puts_warn "Contents: $(ls -la "$BUN_EXTRACT_DIR/" 2>/dev/null)"
+  elif ! unzip -tq "$bun_zip" >/dev/null 2>&1; then
+    puts_warn "Downloaded file is not a valid zip archive."
     exit 1
   fi
 
-  # Save to cache for future builds
-  if [[ -n "$CACHE_DIR" ]]; then
-    # Clean stale binary versions from cache before saving
-    if [ -d "$CACHE_DIR/bun-bin-cache" ]; then
-      for cached_ver in "$CACHE_DIR/bun-bin-cache/"*/; do
-        [ -d "$cached_ver" ] || continue
-        ver_name=$(basename "$cached_ver")
-        if [[ "$ver_name" != "$BUN_VERSION" ]]; then
-          rm -rf "$cached_ver"
-        fi
-      done
+  unzip -qo "$bun_zip" -d "$bun_extract_dir"
+
+  if [[ ! -f "$bun_extract_dir/$BUN_ARTIFACT_BASE/bun" ]]; then
+    puts_warn "Unexpected archive structure; could not find bun binary."
+    puts_warn "Expected: $BUN_ARTIFACT_BASE/bun"
+    exit 1
+  fi
+
+  cp "$bun_extract_dir/$BUN_ARTIFACT_BASE/bun" "$BUN_INSTALL/bin/bun"
+  chmod +x "$BUN_INSTALL/bin/bun"
+}
+
+prune_binary_cache() {
+  local version_dir artifact_dir version_name artifact_name
+
+  [[ -n "$CACHE_DIR" && -d "$CACHE_DIR/bun-bin-cache" ]] || return 0
+
+  for version_dir in "$CACHE_DIR/bun-bin-cache/"*; do
+    [[ -d "$version_dir" ]] || continue
+    version_name=$(basename "$version_dir")
+    if [[ "$version_name" != "$BUN_VERSION" ]]; then
+      rm -rf "$version_dir"
     fi
-    mkdir -p "$CACHE_DIR/bun-bin-cache/$BUN_VERSION"
-    cp -R "$BUN_INSTALL/bin/." "$CACHE_DIR/bun-bin-cache/$BUN_VERSION/"
+  done
+
+  [[ -d "$CACHE_DIR/bun-bin-cache/$BUN_VERSION" ]] || return 0
+  for artifact_dir in "$CACHE_DIR/bun-bin-cache/$BUN_VERSION/"*; do
+    [[ -d "$artifact_dir" ]] || continue
+    artifact_name=$(basename "$artifact_dir")
+    if [[ "$artifact_name" != "$BUN_ARTIFACT_BASE" ]]; then
+      rm -rf "$artifact_dir"
+    fi
+  done
+}
+
+BINARY_CACHE_DIR="${CACHE_DIR:+$CACHE_DIR/bun-bin-cache/$BUN_VERSION/$BUN_ARTIFACT_BASE}"
+restored_binary="false"
+
+if [[ "$BUN_CACHEABLE_BINARY" == "true" && -n "$BINARY_CACHE_DIR" && -x "$BINARY_CACHE_DIR/bun" ]]; then
+  puts_step "Restoring Bun $BUN_VERSION ($BUN_ARTIFACT_BASE) from cache..."
+  cp "$BINARY_CACHE_DIR/bun" "$BUN_INSTALL/bin/bun"
+  chmod +x "$BUN_INSTALL/bin/bun"
+  restored_binary="true"
+
+  if ! "$BUN_INSTALL/bin/bun" --version >/dev/null 2>&1; then
+    puts_warn "Cached Bun binary is invalid. Re-downloading."
+    rm -rf "$BINARY_CACHE_DIR"
+    rm -f "$BUN_INSTALL/bin/bun"
+    restored_binary="false"
+  fi
+fi
+
+if [[ "$restored_binary" != "true" ]]; then
+  download_bun
+
+  if [[ "$BUN_CACHEABLE_BINARY" == "true" && -n "$BINARY_CACHE_DIR" ]]; then
+    prune_binary_cache
+    mkdir -p "$BINARY_CACHE_DIR"
+    cp "$BUN_INSTALL/bin/bun" "$BINARY_CACHE_DIR/bun"
   fi
 fi
 
 export PATH="$BUN_INSTALL/bin:$PATH"
-
 puts_step "Installed Bun $(bun --version)"
 
-# -----------------------------------------------------------------------
-# Runtime environment — profile.d script runs on every dyno start
-# -----------------------------------------------------------------------
 PROFILE_PATH="$BUILD_DIR/.profile.d/bun.sh"
-mkdir -p "$(dirname "$PROFILE_PATH")"
-echo 'export PATH="$HOME/.heroku/bin:$PATH"' > "$PROFILE_PATH"
-echo 'export BUN_INSTALL_CACHE_DIR="$HOME/.heroku/bun-pkg-cache"' >> "$PROFILE_PATH"
-echo "export NODE_ENV=\"\${NODE_ENV:-$NODE_ENV}\"" >> "$PROFILE_PATH"
-
-# -----------------------------------------------------------------------
-# Export environment variables for subsequent buildpacks (build phase only)
-# -----------------------------------------------------------------------
+mkdir -p "$(dirname "$PROFILE_PATH")" "$HEROKU_DIR/bun-pkg-cache"
 {
+  echo 'export PATH="$HOME/.heroku/bin:$PATH"'
+  echo 'export BUN_INSTALL="$HOME/.heroku"'
+  echo 'export BUN_INSTALL_CACHE_DIR="${BUN_INSTALL_CACHE_DIR:-$HOME/.heroku/bun-pkg-cache}"'
+  echo "export NODE_ENV=\"\${NODE_ENV:-$NODE_ENV}\""
+} > "$PROFILE_PATH"
+
+{
+  echo '#!/usr/bin/env bash'
   echo "export PATH=\"$BUILD_DIR/.heroku/bin:\$PATH\""
+  echo "export BUN_INSTALL=\"$BUILD_DIR/.heroku\""
   echo "export BUN_INSTALL_CACHE_DIR=\"$BUN_INSTALL_CACHE_DIR\""
-} >> "$BP_DIR/export"
+  echo "export NODE_ENV=\"\${NODE_ENV:-$NODE_ENV}\""
+} > "$BP_DIR/export"
+chmod +x "$BP_DIR/export" 2>/dev/null || true
 
-# -----------------------------------------------------------------------
-# Validate package.json before attempting to parse it
-# -----------------------------------------------------------------------
-if [ -f "package.json" ]; then
-  if [[ "$(is_invalid_json_file "package.json")" == "true" ]]; then
-    puts_warn "package.json contains invalid JSON — aborting build."
-    exit 1
-  fi
-fi
+run_package_script "heroku-prebuild" "Running heroku-prebuild" "BUN_SKIP_HEROKU_PREBUILD" ".skip-bun-heroku-prebuild"
 
-# -----------------------------------------------------------------------
-# Build steps
-# -----------------------------------------------------------------------
-
-# 1. heroku-prebuild (runs BEFORE dependency install, per Heroku convention)
 if [[ -f "package.json" ]]; then
-  has_heroku_prebuild_script=$(has_script "package.json" "heroku-prebuild")
-  if [[ "${has_heroku_prebuild_script}" == "true" && ! -f ".skip-bun-heroku-prebuild" ]]; then
-    puts_step "Running heroku-prebuild..."
-    bun run heroku-prebuild
-  fi
-fi
+  if skip_requested "BUN_SKIP_INSTALL" ".skip-bun-install"; then
+    puts_step "Skipping bun install."
+  else
+    install_args=(install)
+    if [[ -f "bun.lock" || -f "bun.lockb" ]]; then
+      install_args+=(--frozen-lockfile)
+    else
+      puts_warn "No lockfile found; running bun install without --frozen-lockfile."
+    fi
 
-# 2. Install dependencies
-if [[ -f "package.json" && ! -f ".skip-bun-install" ]]; then
-  puts_step "Installing dependencies..."
-  # Use --frozen-lockfile in CI-like environments to ensure reproducibility.
-  # Falls back to a regular install only when no lockfile is present.
-  if [ -f "bun.lock" ] || [ -f "bun.lockb" ]; then
-    if ! bun install --frozen-lockfile; then
-      puts_warn "Dependency install failed with --frozen-lockfile."
-      puts_warn "If your lockfile is out of date, run 'bun install' locally"
-      puts_warn "and commit the updated bun.lock / bun.lockb."
+    if [[ -n "${BUN_INSTALL_FLAGS:-}" ]]; then
+      read -r -a extra_install_args <<< "$BUN_INSTALL_FLAGS"
+      install_args+=("${extra_install_args[@]}")
+    fi
+
+    puts_step "Installing dependencies..."
+    if ! bun "${install_args[@]}"; then
+      if [[ -f "bun.lock" || -f "bun.lockb" ]]; then
+        puts_warn "Dependency install failed with --frozen-lockfile."
+        puts_warn "If your lockfile is out of date, run 'bun install' locally and commit the updated lockfile."
+      fi
       exit 1
     fi
-  else
-    puts_warn "No lockfile found — running bun install without --frozen-lockfile."
-    bun install
   fi
 fi
 
-# 3. build
-if [[ -f "package.json" ]]; then
-  has_build_script=$(has_script "package.json" "build")
-  if [[ "${has_build_script}" == "true" && ! -f ".skip-bun-build" ]]; then
-    puts_step "Building application..."
-    bun run build
-    puts_step "Build complete."
-  fi
-fi
-
-# 4. heroku-postbuild
-if [[ -f "package.json" ]]; then
-  has_heroku_postbuild_script=$(has_script "package.json" "heroku-postbuild")
-  if [[ "${has_heroku_postbuild_script}" == "true" && ! -f ".skip-bun-heroku-postbuild" ]]; then
-    puts_step "Running heroku-postbuild..."
-    bun run heroku-postbuild
-  fi
-fi
+run_package_script "build" "Building application" "BUN_SKIP_BUILD" ".skip-bun-build"
+run_package_script "heroku-postbuild" "Running heroku-postbuild" "BUN_SKIP_HEROKU_POSTBUILD" ".skip-bun-heroku-postbuild"

@@ -10,7 +10,7 @@ if [[ -z "$BUILD_DIR" ]] || [[ ! -d "$BUILD_DIR" ]]; then
   exit 1
 fi
 
-# ── Tier 1: Bun-exclusive files (highest confidence) ────────────────────────
+# Tier 1: Bun-exclusive files (highest confidence)
 
 # Bun's text lockfile (default since v1.2)
 if [ -f "$BUILD_DIR/bun.lock" ]; then
@@ -34,23 +34,27 @@ if [ -f "$BUILD_DIR/bunfig.toml" ] || \
   echo "Bun"; exit 0
 fi
 
-# ── Tier 2: package.json bun-specific fields (high confidence) ──────────────
+# Tier 2: package.json Bun-specific fields (high confidence)
 
 if [ -f "$BUILD_DIR/package.json" ]; then
 
-  # packageManager field explicitly set to bun (e.g. "bun@1.2.0")
-  if grep -q '"packageManager"[[:space:]]*:[[:space:]]*"bun@' \
-       "$BUILD_DIR/package.json" 2>/dev/null; then
-    echo "Bun"; exit 0
-  fi
-
-  # engines.bun field present (e.g. "engines": { "bun": ">=1.0.0" })
   if command -v jq >/dev/null 2>&1; then
-    if jq -e 'has("engines") and (.engines | type == "object") and (.engines | has("bun"))' "$BUILD_DIR/package.json" >/dev/null 2>&1; then
+    # packageManager field explicitly set to bun (e.g. "bun@1.2.0")
+    if jq -e '.packageManager? | strings | startswith("bun@")' "$BUILD_DIR/package.json" >/dev/null 2>&1; then
+      echo "Bun"; exit 0
+    fi
+
+    # engines.bun field present (e.g. "engines": { "bun": "1.2.0" })
+    if jq -e '.engines? | objects | has("bun")' "$BUILD_DIR/package.json" >/dev/null 2>&1; then
       echo "Bun"; exit 0
     fi
   else
-    # Fallback to context-aware grep if jq is missing
+    if grep -q '"packageManager"[[:space:]]*:[[:space:]]*"bun@' \
+         "$BUILD_DIR/package.json" 2>/dev/null; then
+      echo "Bun"; exit 0
+    fi
+
+    # Fallback to context-aware grep if jq is missing.
     if grep -A 10 '"engines"' "$BUILD_DIR/package.json" 2>/dev/null \
          | grep -q '"bun"[[:space:]]*:'; then
       echo "Bun"; exit 0

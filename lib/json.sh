@@ -1,4 +1,4 @@
-# lib/json.sh — JSON helper functions (sourced by bin/compile and bin/release)
+# lib/json.sh - JSON helper functions (sourced by bin/compile and bin/release)
 # Based on: https://github.com/heroku/heroku-buildpack-nodejs/blob/main/lib/json.sh
 
 read_json() {
@@ -21,7 +21,7 @@ has_script() {
 
   if test -f "$file"; then
     # Use --arg to safely bind $key, preventing jq filter injection
-    jq --arg key "$key" '.scripts | has($key)' "$file"
+    jq --arg key "$key" '(.scripts? | objects | has($key)) // false' "$file"
   else
     echo "false"
   fi

@@ -1,15 +1,17 @@
 # Enforce Unix LF line endings for all shell scripts.
 # Prevents CRLF corruption on Windows from breaking execution on Heroku Linux dynos.
+.gitattributes text eol=lf
+Makefile     text eol=lf
 bin/compile  text eol=lf
 bin/detect   text eol=lf
 bin/release  text eol=lf
 bin/test     text eol=lf
 lib/json.sh  text eol=lf
 
-# Text files use platform-native endings
-*.md         text
+# Documentation files
+*.md         text eol=lf
 *.txt        text
 
-# Config files — enforce LF for Linux build environments
+# Config files - enforce LF for Linux build environments
 *.yml        text eol=lf
 *.toml       text eol=lf

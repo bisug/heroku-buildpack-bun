@@ -31,11 +31,8 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Ensure scripts are executable
-        run: chmod +x bin/detect bin/compile bin/release bin/test
-
       - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y jq unzip
+        run: sudo apt-get update && sudo apt-get install -y curl jq unzip
 
       - name: Run tests
         run: make test

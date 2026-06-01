@@ -7,14 +7,14 @@
 set -euo pipefail
 #
 # default_process_types is ONLY used when no Procfile is present.
-# It can contain multiple process types — Heroku uses whichever the user scales.
+# It can contain multiple process types - Heroku uses whichever the user scales.
 #
 # Detection logic (all sourced from package.json scripts):
-#   "start"  or "web"    → web dyno   (bun run <script>)
-#   "worker"             → worker dyno
-#   "release"            → release dyno (runs once per deploy)
-#   "scheduler"          → scheduler dyno
-#   No matching scripts  → falls back to common entry file for web
+#   "start"  or "web"    -> web dyno   (bun run <script>)
+#   "worker"             -> worker dyno
+#   "release"            -> release dyno (runs once per deploy)
+#   "scheduler"          -> scheduler dyno
+#   No matching scripts  -> falls back to common entry file for web
 
 BUILD_DIR="${1:-}"
 BP_DIR=$(cd "$(dirname "$0")"; cd ..; pwd)
@@ -24,7 +24,7 @@ source "$BP_DIR/lib/json.sh"
 PKG="$BUILD_DIR/package.json"
 
 
-# ── Build the default_process_types block ───────────────────────────────────
+# Build the default_process_types block.
 PROCESS_TYPES=""
 
 # If the user provides a Procfile, Heroku will use it. We should NOT try to 
@@ -73,7 +73,7 @@ if [[ ! -f "$BUILD_DIR/Procfile" ]]; then
   fi
 fi
 
-# ── Emit YAML ────────────────────────────────────────────────────────────────
+# Emit YAML.
 echo "---"
 echo "addons: []"
 

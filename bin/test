@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # bin/test
-# Basic smoke tests for the buildpack — run via: heroku buildpacks:test
-# Supported stacks: heroku-22, heroku-24
+# Basic smoke tests for the buildpack - run via: heroku buildpacks:test
+# Supported stacks: heroku-22, heroku-24, heroku-26
 
 set -euo pipefail
 
@@ -12,7 +12,7 @@ fail() { echo "  FAIL: $*" >&2; exit 1; }
 
 echo "-----> Running buildpack tests"
 
-# ── Section 1: Sanity checks ────────────────────────────────────────────────
+# Section 1: Sanity checks
 
 # 1. Required scripts are executable
 for script in detect compile release; do
@@ -32,7 +32,7 @@ for tool in jq curl unzip bash; do
   fi
 done
 
-# ── Section 2: Detection tests ──────────────────────────────────────────────
+# Section 2: Detection tests
 
 # 3. detect rejects a non-Bun directory
 tmp_empty=$(mktemp -d)
@@ -130,7 +130,7 @@ else
   pass "detect correctly rejects non-existent directory"
 fi
 
-# ── Section 3: JSON helper tests ─────────────────────────────────────────────
+# Section 3: JSON helper tests
 
 source "$BP_DIR/lib/json.sh"
 
@@ -150,7 +150,23 @@ else
   fail "has_script should return false for missing 'nonexistent' script"
 fi
 
-# 15. is_invalid_json_file detects invalid JSON
+# 15. has_script returns false when scripts is missing
+echo '{}' > "$tmp_json/no-scripts.json"
+if [[ "$(has_script "$tmp_json/no-scripts.json" "start")" == "false" ]]; then
+  pass "has_script returns false when scripts is missing"
+else
+  fail "has_script should return false when scripts is missing"
+fi
+
+# 16. has_script returns false when scripts is not an object
+echo '{"scripts": null}' > "$tmp_json/null-scripts.json"
+if [[ "$(has_script "$tmp_json/null-scripts.json" "start")" == "false" ]]; then
+  pass "has_script returns false when scripts is null"
+else
+  fail "has_script should return false when scripts is null"
+fi
+
+# 17. is_invalid_json_file detects invalid JSON
 echo 'not valid json{' > "$tmp_json/bad.json"
 if [[ "$(is_invalid_json_file "$tmp_json/bad.json")" == "true" ]]; then
   pass "is_invalid_json_file correctly detects invalid JSON"
@@ -158,7 +174,7 @@ else
   fail "is_invalid_json_file should detect invalid JSON"
 fi
 
-# 16. is_invalid_json_file passes valid JSON
+# 18. is_invalid_json_file passes valid JSON
 if [[ "$(is_invalid_json_file "$tmp_json/package.json")" == "false" ]]; then
   pass "is_invalid_json_file correctly passes valid JSON"
 else
@@ -166,9 +182,9 @@ else
 fi
 rm -rf "$tmp_json"
 
-# ── Section 4: Release script tests ─────────────────────────────────────────
+# Section 4: Release script tests
 
-# 17. release outputs web: bun run start for start script
+# 19. release outputs web: bun run start for start script
 tmp_rel=$(mktemp -d)
 echo '{"scripts": {"start": "bun run index.js"}}' > "$tmp_rel/package.json"
 release_out=$("$BP_DIR/bin/release" "$tmp_rel")
@@ -180,7 +196,7 @@ else
 fi
 rm -rf "$tmp_rel"
 
-# 18. release outputs worker process type
+# 20. release outputs worker process type
 tmp_worker=$(mktemp -d)
 echo '{"scripts": {"start": "bun run index.js", "worker": "bun run worker.js"}}' > "$tmp_worker/package.json"
 release_out=$("$BP_DIR/bin/release" "$tmp_worker")
@@ -192,7 +208,7 @@ else
 fi
 rm -rf "$tmp_worker"
 
-# 19. release prefers 'web' script over 'start'
+# 21. release prefers 'web' script over 'start'
 tmp_web=$(mktemp -d)
 echo '{"scripts": {"web": "bun serve.js", "start": "bun index.js"}}' > "$tmp_web/package.json"
 release_out=$("$BP_DIR/bin/release" "$tmp_web")
@@ -204,7 +220,7 @@ else
 fi
 rm -rf "$tmp_web"
 
-# 20. release falls back to entry file when no scripts defined
+# 22. release falls back to entry file when no scripts defined
 tmp_entry=$(mktemp -d)
 echo '{}' > "$tmp_entry/package.json"
 echo 'console.log("hello")' > "$tmp_entry/index.ts"
@@ -217,9 +233,9 @@ else
 fi
 rm -rf "$tmp_entry"
 
-# ── Section 5: Compile + Release integration test ───────────────────────────
+# Section 5: Compile + Release integration test
 
-# 21. compile and release integration test (end-to-end)
+# 23. compile and release integration test (end-to-end)
 tmp_app=$(mktemp -d)
 tmp_cache=$(mktemp -d)
 tmp_env=$(mktemp -d)
@@ -249,4 +265,3 @@ fi
 rm -rf "$tmp_app" "$tmp_cache" "$tmp_env"
 
 echo "-----> All tests passed"
-
