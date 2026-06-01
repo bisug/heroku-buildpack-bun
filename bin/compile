@@ -78,6 +78,10 @@ skip_requested() {
   [[ -f "$marker_file" ]] || is_truthy "${!env_name:-}"
 }
 
+shell_quote() {
+  printf "%q" "$1"
+}
+
 export_env_dir() {
   local env_dir="$1"
   local entry key
@@ -143,7 +147,7 @@ resolve_latest_bun_version() {
   if [[ -n "$latest_cache_file" && -f "$latest_cache_file" ]]; then
     cache_age=$(( $(date +%s) - $(date -r "$latest_cache_file" +%s 2>/dev/null || echo "0") ))
     if (( cache_age < cache_ttl )); then
-      resolved=$(cat "$latest_cache_file" | tr -d '[:space:]')
+      resolved=$(tr -d '[:space:]' < "$latest_cache_file")
       if resolved=$(normalize_bun_version "$resolved"); then
         puts_step "Using cached latest Bun version: $resolved" >&2
         printf "%s\n" "$resolved"
@@ -170,7 +174,7 @@ resolve_latest_bun_version() {
   fi
 
   if [[ -n "$latest_cache_file" && -f "$latest_cache_file" ]]; then
-    resolved=$(cat "$latest_cache_file" | tr -d '[:space:]')
+    resolved=$(tr -d '[:space:]' < "$latest_cache_file")
     if resolved=$(normalize_bun_version "$resolved"); then
       puts_warn "Could not refresh latest Bun version; using stale cached value: $resolved"
       printf "%s\n" "$resolved"
@@ -226,7 +230,7 @@ elif [[ -f "runtime.bun.txt" ]]; then
   BUN_VERSION_RAW=$(cat "runtime.bun.txt")
   BUN_VERSION_SOURCE="runtime.bun.txt"
 elif [[ -f "runtime.txt" ]]; then
-  runtime_value=$(cat "runtime.txt" | tr -d '[:space:]')
+  runtime_value=$(tr -d '[:space:]' < "runtime.txt")
   if [[ "$runtime_value" =~ ^([0-9]|v[0-9]|bun-) ]]; then
     BUN_VERSION_RAW="$runtime_value"
     BUN_VERSION_SOURCE="runtime.txt"
@@ -416,21 +420,30 @@ fi
 export PATH="$BUN_INSTALL/bin:$PATH"
 puts_step "Installed Bun $(bun --version)"
 
+NODE_ENV_QUOTED=$(shell_quote "$NODE_ENV")
+BUILD_BIN_QUOTED=$(shell_quote "$BUILD_DIR/.heroku/bin")
+BUILD_HEROKU_QUOTED=$(shell_quote "$BUILD_DIR/.heroku")
+BUN_CACHE_QUOTED=$(shell_quote "$BUN_INSTALL_CACHE_DIR")
+
 PROFILE_PATH="$BUILD_DIR/.profile.d/bun.sh"
 mkdir -p "$(dirname "$PROFILE_PATH")" "$HEROKU_DIR/bun-pkg-cache"
 {
-  echo 'export PATH="$HOME/.heroku/bin:$PATH"'
-  echo 'export BUN_INSTALL="$HOME/.heroku"'
-  echo 'export BUN_INSTALL_CACHE_DIR="${BUN_INSTALL_CACHE_DIR:-$HOME/.heroku/bun-pkg-cache}"'
-  echo "export NODE_ENV=\"\${NODE_ENV:-$NODE_ENV}\""
+  echo "export PATH=\"\$HOME/.heroku/bin:\$PATH\""
+  echo "export BUN_INSTALL=\"\$HOME/.heroku\""
+  echo "export BUN_INSTALL_CACHE_DIR=\"\${BUN_INSTALL_CACHE_DIR:-\$HOME/.heroku/bun-pkg-cache}\""
+  echo "if [ -z \"\${NODE_ENV:-}\" ]; then"
+  echo "  export NODE_ENV=$NODE_ENV_QUOTED"
+  echo "fi"
 } > "$PROFILE_PATH"
 
 {
   echo '#!/usr/bin/env bash'
-  echo "export PATH=\"$BUILD_DIR/.heroku/bin:\$PATH\""
-  echo "export BUN_INSTALL=\"$BUILD_DIR/.heroku\""
-  echo "export BUN_INSTALL_CACHE_DIR=\"$BUN_INSTALL_CACHE_DIR\""
-  echo "export NODE_ENV=\"\${NODE_ENV:-$NODE_ENV}\""
+  echo "export PATH=$BUILD_BIN_QUOTED:\$PATH"
+  echo "export BUN_INSTALL=$BUILD_HEROKU_QUOTED"
+  echo "export BUN_INSTALL_CACHE_DIR=$BUN_CACHE_QUOTED"
+  echo "if [ -z \"\${NODE_ENV:-}\" ]; then"
+  echo "  export NODE_ENV=$NODE_ENV_QUOTED"
+  echo "fi"
 } > "$BP_DIR/export"
 chmod +x "$BP_DIR/export" 2>/dev/null || true
 

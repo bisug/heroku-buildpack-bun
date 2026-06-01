@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # lib/json.sh - JSON helper functions (sourced by bin/compile and bin/release)
 # Based on: https://github.com/heroku/heroku-buildpack-nodejs/blob/main/lib/json.sh
 
