@@ -240,28 +240,46 @@ tmp_app=$(mktemp -d)
 tmp_cache=$(mktemp -d)
 tmp_env=$(mktemp -d)
 
+# The standard x64 Bun binary requires AVX2 and crashes (SIGILL) on CPUs without
+# it (e.g. some low-power Intel/AMD). Use the baseline variant there. We pin a
+# recent version whose binary is runnable on CI runners (they have AVX2), which
+# also avoids the ancient v1.0.0 binary failing on newer glibc.
+if ! grep -qi 'avx2' /proc/cpuinfo 2>/dev/null; then
+  export BUN_BINARY_VARIANT="baseline"
+fi
+TEST_BUN_VERSION="1.3.13"
+
 # Setup a basic bun app
 echo '{"scripts": {"start": "bun run index.js"}}' > "$tmp_app/package.json"
 echo 'console.log("Hello from tests!")' > "$tmp_app/index.js"
-echo 'v1.0.0' > "$tmp_app/.bun-version"
+echo "v$TEST_BUN_VERSION" > "$tmp_app/.bun-version"
 
-# Run compile and capture output to prevent spamming the console, but save it in case of error
-if compile_out=$("$BP_DIR/bin/compile" "$tmp_app" "$tmp_cache" "$tmp_env" 2>&1); then
-  pass "compile successfully builds a basic app"
+# Skip the network-dependent compile test when we can't reach GitHub.
+if ! curl -fsSI --max-time 10 >/dev/null 2>&1 \
+     "https://github.com/oven-sh/bun/releases/download/bun-v${TEST_BUN_VERSION}/bun-linux-x64.zip"; then
+  echo "  SKIP: compile integration test (no network access to GitHub)"
+  unset BUN_BINARY_VARIANT
+  rm -rf "$tmp_app" "$tmp_cache" "$tmp_env"
 else
-  echo "$compile_out"
-  fail "compile failed on a basic app"
-fi
+  # Run compile and capture output to prevent spamming the console, but save it in case of error
+  if compile_out=$("$BP_DIR/bin/compile" "$tmp_app" "$tmp_cache" "$tmp_env" 2>&1); then
+    pass "compile successfully builds a basic app"
+  else
+    echo "$compile_out"
+    fail "compile failed on a basic app"
+  fi
 
-# Run release and check YAML
-release_out=$("$BP_DIR/bin/release" "$tmp_app")
-if echo "$release_out" | grep -q "web: bun run start"; then
-  pass "release outputs correct web process type"
-else
-  echo "$release_out"
-  fail "release output missing 'web: bun run start'"
-fi
+  # Run release and check YAML
+  release_out=$("$BP_DIR/bin/release" "$tmp_app")
+  if echo "$release_out" | grep -q "web: bun run start"; then
+    pass "release outputs correct web process type"
+  else
+    echo "$release_out"
+    fail "release output missing 'web: bun run start'"
+  fi
 
-rm -rf "$tmp_app" "$tmp_cache" "$tmp_env"
+  unset BUN_BINARY_VARIANT
+  rm -rf "$tmp_app" "$tmp_cache" "$tmp_env"
+fi
 
 echo "-----> All tests passed"

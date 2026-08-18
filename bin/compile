@@ -149,14 +149,14 @@ resolve_latest_bun_version() {
     if (( cache_age < cache_ttl )); then
       resolved=$(tr -d '[:space:]' < "$latest_cache_file")
       if resolved=$(normalize_bun_version "$resolved"); then
-        puts_step "Using cached latest Bun version: $resolved" >&2
+        puts_step "Using cached latest Bun version: $resolved"
         printf "%s\n" "$resolved"
         return 0
       fi
     fi
   fi
 
-  puts_step "Resolving latest Bun version from GitHub..." >&2
+  puts_step "Resolving latest Bun version from GitHub..."
   tag=$(curl -fsSL \
     --connect-timeout 10 \
     --max-time 30 \
@@ -365,6 +365,15 @@ download_bun() {
 
   cp "$bun_extract_dir/$BUN_ARTIFACT_BASE/bun" "$BUN_INSTALL/bin/bun"
   chmod +x "$BUN_INSTALL/bin/bun"
+
+  # Verify the freshly-downloaded binary actually runs. The standard x64 build
+  # requires AVX2; on older CPUs it dies with SIGILL. Catch that here, near the
+  # download, instead of letting `bun install` fail later with a cryptic error.
+  if ! "$BUN_INSTALL/bin/bun" --version >/dev/null 2>&1; then
+    puts_warn "Downloaded Bun binary is not runnable on this system."
+    puts_warn "On CPUs without AVX2, set BUN_BINARY_VARIANT=baseline."
+    exit 1
+  fi
 }
 
 prune_binary_cache() {
