@@ -65,17 +65,14 @@ cleanup() {
 }
 trap cleanup EXIT
 
-is_truthy() {
-  case "${1:-}" in
-    1|true|TRUE|yes|YES|on|ON) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
 skip_requested() {
   local env_name="$1"
   local marker_file="$2"
-  [[ -f "$marker_file" ]] || is_truthy "${!env_name:-}"
+  [[ -f "$marker_file" ]] && return 0
+  case "${!env_name:-}" in
+    1|true|TRUE|yes|YES|on|ON) return 0 ;;
+  esac
+  return 1
 }
 
 shell_quote() {
@@ -289,7 +286,6 @@ esac
 
 case "$ARCH" in
   x86_64)
-    BUN_ARCH="x64"
     if [[ "$BUN_BINARY_VARIANT" == "baseline" ]]; then
       BUN_ARTIFACT_BASE="bun-linux-x64-baseline"
     else
@@ -297,7 +293,6 @@ case "$ARCH" in
     fi
     ;;
   aarch64|arm64)
-    BUN_ARCH="aarch64"
     if [[ "$BUN_BINARY_VARIANT" == "baseline" ]]; then
       puts_warn "BUN_BINARY_VARIANT=baseline is only available for x64."
       exit 1
@@ -310,20 +305,28 @@ case "$ARCH" in
     ;;
 esac
 
-BUN_ARTIFACT="${BUN_ARTIFACT_BASE}.zip"
 if [[ "$BUN_VERSION" == "canary" ]]; then
-  BUN_RELEASE_TAG="canary"
   BUN_CACHEABLE_BINARY="false"
 else
-  BUN_RELEASE_TAG="bun-${BUN_VERSION}"
   BUN_CACHEABLE_BINARY="true"
 fi
-BUN_DOWNLOAD_URL="https://github.com/oven-sh/bun/releases/download/${BUN_RELEASE_TAG}/${BUN_ARTIFACT}"
 
 download_bun() {
-  local bun_zip bun_extract_dir http_code
+  local bun_zip bun_extract_dir http_code bun_arch bun_release_tag bun_artifact
 
-  puts_step "Downloading Bun $BUN_VERSION for linux-${BUN_ARCH} (${BUN_BINARY_VARIANT})..."
+  case "$ARCH" in
+    x86_64) bun_arch="x64" ;;
+    aarch64|arm64) bun_arch="aarch64" ;;
+  esac
+
+  if [[ "$BUN_VERSION" == "canary" ]]; then
+    bun_release_tag="canary"
+  else
+    bun_release_tag="bun-${BUN_VERSION}"
+  fi
+  bun_artifact="${BUN_ARTIFACT_BASE}.zip"
+
+  puts_step "Downloading Bun $BUN_VERSION for linux-${bun_arch} (${BUN_BINARY_VARIANT})..."
   bun_zip=$(mktemp)
   bun_extract_dir=$(mktemp -d)
   cleanup_paths+=("$bun_zip" "$bun_extract_dir")
@@ -336,11 +339,11 @@ download_bun() {
     --retry-connrefused \
     -w "%{http_code}" \
     -o "$bun_zip" \
-    "$BUN_DOWNLOAD_URL" 2>/dev/null || true)
+    "https://github.com/oven-sh/bun/releases/download/${bun_release_tag}/${bun_artifact}" 2>/dev/null || true)
 
   if [[ "$http_code" != "200" || ! -s "$bun_zip" ]]; then
     puts_warn "Failed to download Bun $BUN_VERSION (HTTP ${http_code:-unknown})."
-    puts_warn "URL: $BUN_DOWNLOAD_URL"
+    puts_warn "URL: https://github.com/oven-sh/bun/releases/download/${bun_release_tag}/${bun_artifact}"
     puts_warn "Verify the version and binary variant exist: https://github.com/oven-sh/bun/releases"
     exit 1
   fi
@@ -435,7 +438,7 @@ BUILD_HEROKU_QUOTED=$(shell_quote "$BUILD_DIR/.heroku")
 BUN_CACHE_QUOTED=$(shell_quote "$BUN_INSTALL_CACHE_DIR")
 
 PROFILE_PATH="$BUILD_DIR/.profile.d/bun.sh"
-mkdir -p "$(dirname "$PROFILE_PATH")" "$HEROKU_DIR/bun-pkg-cache"
+mkdir -p "$(dirname "$PROFILE_PATH")"
 {
   echo "export PATH=\"\$HOME/.heroku/bin:\$PATH\""
   echo "export BUN_INSTALL=\"\$HOME/.heroku\""
