@@ -1,7 +1,0 @@
-#!/usr/bin/env bash
-export PATH=/tmp/tmp.eqp5WD3Enr/.heroku/bin:$PATH
-export BUN_INSTALL=/tmp/tmp.eqp5WD3Enr/.heroku
-export BUN_INSTALL_CACHE_DIR=/tmp/tmp.Lo6fZocuH0/bun-pkg-cache
-if [ -z "${NODE_ENV:-}" ]; then
-  export NODE_ENV=production
-fi
