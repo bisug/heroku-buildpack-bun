@@ -95,7 +95,7 @@ export_env_dir() {
     fi
 
     case "$key" in
-      PATH|HOME|GIT_DIR|CPATH|CPPATH|LD_PRELOAD|LIBRARY_PATH|LD_LIBRARY_PATH|BASH_ENV|ENV|SHELLOPTS|BUILDPACK_URL|SOURCE_VERSION)
+      PATH|HOME|IFS|GIT_DIR|CPATH|CPPATH|LD_PRELOAD|LIBRARY_PATH|LD_LIBRARY_PATH|BASH_ENV|ENV|SHELLOPTS|BUILDPACK_URL|SOURCE_VERSION)
         continue
         ;;
     esac
@@ -146,14 +146,17 @@ resolve_latest_bun_version() {
     if (( cache_age < cache_ttl )); then
       resolved=$(tr -d '[:space:]' < "$latest_cache_file")
       if resolved=$(normalize_bun_version "$resolved"); then
-        puts_step "Using cached latest Bun version: $resolved"
+        # This function's stdout is captured by the caller via $( ); log
+        # lines MUST go to stderr or they corrupt the returned version.
+        puts_step "Using cached latest Bun version: $resolved" >&2
         printf "%s\n" "$resolved"
         return 0
       fi
     fi
   fi
 
-  puts_step "Resolving latest Bun version from GitHub..."
+  # stdout of this function is captured by the caller; logs go to stderr.
+  puts_step "Resolving latest Bun version from GitHub..." >&2
   tag=$(curl -fsSL \
     --connect-timeout 10 \
     --max-time 30 \

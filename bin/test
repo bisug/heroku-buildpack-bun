@@ -278,6 +278,29 @@ else
     fail "release output missing 'web: bun run start'"
   fi
 
+  # 24. Regression: default "latest" resolution must not leak log output
+  # into $BUN_VERSION via command substitution (stdout capture). This path
+  # is what unpinned apps hit on every build.
+  rm -f "$tmp_app/.bun-version"
+  printf 'v%s' "$TEST_BUN_VERSION" > "$tmp_cache/bun-latest-version"
+  if compile_out=$("$BP_DIR/bin/compile" "$tmp_app" "$tmp_cache" "$tmp_env" 2>&1); then
+    pass "compile resolves default latest version from cache"
+  else
+    echo "$compile_out"
+    fail "compile failed resolving default latest version"
+  fi
+  if echo "$compile_out" | grep -q "Bun v$TEST_BUN_VERSION (latest)"; then
+    pass "latest version string is clean (no stdout pollution)"
+  else
+    echo "$compile_out"
+    fail "latest version string corrupted by captured log output"
+  fi
+  if ls "$tmp_cache/bun-bin-cache/v$TEST_BUN_VERSION/"*/bun >/dev/null 2>&1; then
+    pass "binary cache keyed by clean version string"
+  else
+    fail "binary cache missing or keyed by corrupted version string"
+  fi
+
   unset BUN_BINARY_VARIANT
   rm -rf "$tmp_app" "$tmp_cache" "$tmp_env"
 fi
