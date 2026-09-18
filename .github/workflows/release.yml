@@ -39,8 +39,7 @@ jobs:
           subject-path: dist/heroku-buildpack-bun-*.tar.gz
 
       - name: Prepare attestation release asset
-        run: cp "${{ steps.attest.outputs.bundle-path }}" \
-          "dist/heroku-buildpack-bun-${GITHUB_REF_NAME}.intoto.jsonl"
+        run: cp "${{ steps.attest.outputs.bundle-path }}" "dist/heroku-buildpack-bun-${GITHUB_REF_NAME}.intoto.jsonl"
 
       - name: Publish GitHub Release
         env:
