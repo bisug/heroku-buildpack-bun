@@ -16,229 +16,175 @@ echo "-----> Running buildpack tests"
 
 # 1. Required scripts are executable
 for script in detect compile release; do
-  if [ -x "$BP_DIR/bin/$script" ]; then
-    pass "bin/$script is executable"
-  else
-    fail "bin/$script is not executable"
-  fi
+  [ -x "$BP_DIR/bin/$script" ] \
+    && pass "bin/$script is executable" \
+    || fail "bin/$script is not executable"
 done
 
 # 2. Required tools present on build dyno
 for tool in jq curl unzip bash; do
-  if command -v "$tool" &>/dev/null; then
-    pass "$tool is available"
-  else
-    fail "$tool is required but not found"
-  fi
+  command -v "$tool" &>/dev/null \
+    && pass "$tool is available" \
+    || fail "$tool is required but not found"
 done
+
+tmpdirs=()
+new_tmp() { local _var=$1 _d; _d=$(mktemp -d); tmpdirs+=("$_d"); printf -v "$_var" '%s' "$_d"; }
+cleanup_test_tmp() { rm -rf "${tmpdirs[@]:-}"; }
+trap cleanup_test_tmp EXIT
+
+expect_detect() { # $1=0|1 expected exit, $2=dir, $3=message
+  local got
+  if "$BP_DIR/bin/detect" "$2" &>/dev/null; then got=0; else got=1; fi
+  [ "$got" = "$1" ] && pass "$3" || fail "$3 (want exit $1, got $got)"
+}
+
+expect_script() { # $1=file $2=key $3=want $4=message
+  local got
+  got=$(has_script "$1" "$2")
+  [ "$got" = "$3" ] && pass "$4" || fail "$4 (got $got)"
+}
+
+expect_release_contains() { # $1=dir $2=pattern $3=message
+  local out
+  out=$("$BP_DIR/bin/release" "$1")
+  if echo "$out" | grep -q "$2"; then pass "$3"; else echo "$out"; fail "$3"; fi
+}
 
 # Section 2: Detection tests
 
 # 3. detect rejects a non-Bun directory
-tmp_empty=$(mktemp -d)
-if "$BP_DIR/bin/detect" "$tmp_empty" &>/dev/null; then
-  fail "detect should have rejected an empty directory"
-else
-  pass "detect correctly rejects non-Bun directory"
-fi
-rm -rf "$tmp_empty"
+new_tmp tmp_empty
+expect_detect 1 "$tmp_empty" "detect correctly rejects non-Bun directory"
 
 # 4. detect rejects a bare package.json (no Bun signals)
-tmp_pkg=$(mktemp -d)
+new_tmp tmp_pkg
 echo '{}' > "$tmp_pkg/package.json"
-if "$BP_DIR/bin/detect" "$tmp_pkg" &>/dev/null; then
-  fail "detect should have rejected bare package.json (no Bun signals)"
-else
-  pass "detect correctly rejects bare package.json"
-fi
-rm -rf "$tmp_pkg"
+expect_detect 1 "$tmp_pkg" "detect correctly rejects bare package.json"
 
 # 5. detect accepts a directory with .bun-version
-tmp_bun=$(mktemp -d)
+new_tmp tmp_bun
 echo 'v1.3.13' > "$tmp_bun/.bun-version"
-if "$BP_DIR/bin/detect" "$tmp_bun" &>/dev/null; then
-  pass "detect correctly accepts directory with .bun-version"
-else
-  fail "detect should have accepted directory with .bun-version"
-fi
-rm -rf "$tmp_bun"
+expect_detect 0 "$tmp_bun" "detect correctly accepts directory with .bun-version"
 
 # 6. detect accepts a directory with bun.lock
-tmp_lock=$(mktemp -d)
+new_tmp tmp_lock
 echo '{}' > "$tmp_lock/bun.lock"
-if "$BP_DIR/bin/detect" "$tmp_lock" &>/dev/null; then
-  pass "detect correctly accepts directory with bun.lock"
-else
-  fail "detect should have accepted directory with bun.lock"
-fi
-rm -rf "$tmp_lock"
+expect_detect 0 "$tmp_lock" "detect correctly accepts directory with bun.lock"
 
 # 7. detect accepts a directory with bun.lockb (legacy binary lockfile)
-tmp_lockb=$(mktemp -d)
+new_tmp tmp_lockb
 touch "$tmp_lockb/bun.lockb"
-if "$BP_DIR/bin/detect" "$tmp_lockb" &>/dev/null; then
-  pass "detect correctly accepts directory with bun.lockb"
-else
-  fail "detect should have accepted directory with bun.lockb"
-fi
-rm -rf "$tmp_lockb"
+expect_detect 0 "$tmp_lockb" "detect correctly accepts directory with bun.lockb"
 
 # 8. detect accepts package.json with packageManager set to bun
-tmp_pm=$(mktemp -d)
+new_tmp tmp_pm
 echo '{"packageManager": "bun@1.2.0"}' > "$tmp_pm/package.json"
-if "$BP_DIR/bin/detect" "$tmp_pm" &>/dev/null; then
-  pass "detect correctly accepts packageManager=bun"
-else
-  fail "detect should have accepted packageManager=bun"
-fi
-rm -rf "$tmp_pm"
+expect_detect 0 "$tmp_pm" "detect correctly accepts packageManager=bun"
 
 # 9. detect accepts package.json with engines.bun
-tmp_engines=$(mktemp -d)
+new_tmp tmp_engines
 echo '{"engines": {"bun": ">=1.0.0"}}' > "$tmp_engines/package.json"
-if "$BP_DIR/bin/detect" "$tmp_engines" &>/dev/null; then
-  pass "detect correctly accepts engines.bun"
-else
-  fail "detect should have accepted engines.bun"
-fi
-rm -rf "$tmp_engines"
+expect_detect 0 "$tmp_engines" "detect correctly accepts engines.bun"
 
 # 10. detect accepts bunfig.toml
-tmp_bunfig=$(mktemp -d)
+new_tmp tmp_bunfig
 touch "$tmp_bunfig/bunfig.toml"
-if "$BP_DIR/bin/detect" "$tmp_bunfig" &>/dev/null; then
-  pass "detect correctly accepts bunfig.toml"
-else
-  fail "detect should have accepted bunfig.toml"
-fi
-rm -rf "$tmp_bunfig"
+expect_detect 0 "$tmp_bunfig" "detect correctly accepts bunfig.toml"
 
 # 11. detect rejects package.json with engines.node but no engines.bun
-tmp_node=$(mktemp -d)
+new_tmp tmp_node
 echo '{"engines": {"node": ">=18"}}' > "$tmp_node/package.json"
-if "$BP_DIR/bin/detect" "$tmp_node" &>/dev/null; then
-  fail "detect should have rejected engines.node without engines.bun"
-else
-  pass "detect correctly rejects engines.node without engines.bun"
-fi
-rm -rf "$tmp_node"
+expect_detect 1 "$tmp_node" "detect correctly rejects engines.node without engines.bun"
 
 # 12. detect rejects non-existent directory
-if "$BP_DIR/bin/detect" "/tmp/this-path-does-not-exist-$$" &>/dev/null; then
-  fail "detect should have rejected non-existent directory"
-else
-  pass "detect correctly rejects non-existent directory"
-fi
+expect_detect 1 "/tmp/this-path-does-not-exist-$$" "detect correctly rejects non-existent directory"
 
 # Section 3: JSON helper tests
 
 source "$BP_DIR/lib/json.sh"
 
-# 13. has_script returns true for existing script
-tmp_json=$(mktemp -d)
+# 13-16. has_script matrix
+new_tmp tmp_json
 echo '{"scripts": {"start": "bun index.js", "build": "bun build"}}' > "$tmp_json/package.json"
-if [[ "$(has_script "$tmp_json/package.json" "start")" == "true" ]]; then
-  pass "has_script finds existing script"
-else
-  fail "has_script should find 'start' script"
-fi
-
-# 14. has_script returns false for missing script
-if [[ "$(has_script "$tmp_json/package.json" "nonexistent")" == "false" ]]; then
-  pass "has_script returns false for missing script"
-else
-  fail "has_script should return false for missing 'nonexistent' script"
-fi
-
-# 15. has_script returns false when scripts is missing
 echo '{}' > "$tmp_json/no-scripts.json"
-if [[ "$(has_script "$tmp_json/no-scripts.json" "start")" == "false" ]]; then
-  pass "has_script returns false when scripts is missing"
-else
-  fail "has_script should return false when scripts is missing"
-fi
-
-# 16. has_script returns false when scripts is not an object
 echo '{"scripts": null}' > "$tmp_json/null-scripts.json"
-if [[ "$(has_script "$tmp_json/null-scripts.json" "start")" == "false" ]]; then
-  pass "has_script returns false when scripts is null"
-else
-  fail "has_script should return false when scripts is null"
-fi
+expect_script "$tmp_json/package.json" "start" "true" "has_script finds existing script"
+expect_script "$tmp_json/package.json" "nonexistent" "false" "has_script returns false for missing script"
+expect_script "$tmp_json/no-scripts.json" "start" "false" "has_script returns false when scripts is missing"
+expect_script "$tmp_json/null-scripts.json" "start" "false" "has_script returns false when scripts is null"
 
-# 17. is_invalid_json_file detects invalid JSON
+# 17-18. is_invalid_json_file
 echo 'not valid json{' > "$tmp_json/bad.json"
-if [[ "$(is_invalid_json_file "$tmp_json/bad.json")" == "true" ]]; then
-  pass "is_invalid_json_file correctly detects invalid JSON"
-else
-  fail "is_invalid_json_file should detect invalid JSON"
-fi
-
-# 18. is_invalid_json_file passes valid JSON
-if [[ "$(is_invalid_json_file "$tmp_json/package.json")" == "false" ]]; then
-  pass "is_invalid_json_file correctly passes valid JSON"
-else
-  fail "is_invalid_json_file should pass valid JSON"
-fi
-rm -rf "$tmp_json"
+expect_invalid() { # $1=file $2=want $3=message
+  local got
+  got=$(is_invalid_json_file "$1")
+  [ "$got" = "$2" ] && pass "$3" || fail "$3 (got $got)"
+}
+expect_invalid "$tmp_json/bad.json" "true" "is_invalid_json_file correctly detects invalid JSON"
+expect_invalid "$tmp_json/package.json" "false" "is_invalid_json_file correctly passes valid JSON"
 
 # Section 4: Release script tests
 
 # 19. release outputs web: bun run start for start script
-tmp_rel=$(mktemp -d)
+new_tmp tmp_rel
 echo '{"scripts": {"start": "bun run index.js"}}' > "$tmp_rel/package.json"
-release_out=$("$BP_DIR/bin/release" "$tmp_rel")
-if echo "$release_out" | grep -q "web: bun run start"; then
-  pass "release outputs 'web: bun run start' for start script"
-else
-  echo "$release_out"
-  fail "release output missing 'web: bun run start'"
-fi
-rm -rf "$tmp_rel"
+expect_release_contains "$tmp_rel" "web: bun run start" "release outputs 'web: bun run start' for start script"
 
 # 20. release outputs worker process type
-tmp_worker=$(mktemp -d)
+new_tmp tmp_worker
 echo '{"scripts": {"start": "bun run index.js", "worker": "bun run worker.js"}}' > "$tmp_worker/package.json"
-release_out=$("$BP_DIR/bin/release" "$tmp_worker")
-if echo "$release_out" | grep -q "worker: bun run worker"; then
-  pass "release outputs worker process type"
-else
-  echo "$release_out"
-  fail "release output missing 'worker: bun run worker'"
-fi
-rm -rf "$tmp_worker"
+expect_release_contains "$tmp_worker" "worker: bun run worker" "release outputs worker process type"
 
 # 21. release prefers 'web' script over 'start'
-tmp_web=$(mktemp -d)
+new_tmp tmp_web
 echo '{"scripts": {"web": "bun serve.js", "start": "bun index.js"}}' > "$tmp_web/package.json"
-release_out=$("$BP_DIR/bin/release" "$tmp_web")
-if echo "$release_out" | grep -q "web: bun run web"; then
-  pass "release prefers 'web' script over 'start'"
-else
-  echo "$release_out"
-  fail "release should prefer 'web' script over 'start'"
-fi
-rm -rf "$tmp_web"
+expect_release_contains "$tmp_web" "web: bun run web" "release prefers 'web' script over 'start'"
 
 # 22. release falls back to entry file when no scripts defined
-tmp_entry=$(mktemp -d)
+new_tmp tmp_entry
 echo '{}' > "$tmp_entry/package.json"
 echo 'console.log("hello")' > "$tmp_entry/index.ts"
-release_out=$("$BP_DIR/bin/release" "$tmp_entry")
-if echo "$release_out" | grep -q "web: bun run index.ts"; then
-  pass "release falls back to index.ts entry file"
-else
-  echo "$release_out"
-  fail "release should fall back to 'web: bun run index.ts'"
-fi
-rm -rf "$tmp_entry"
+expect_release_contains "$tmp_entry" "web: bun run index.ts" "release falls back to index.ts entry file"
 
-# Section 5: Compile + Release integration test
+# Section 5: Compile unit tests (no network)
 
-# 23. compile and release integration test (end-to-end)
-tmp_app=$(mktemp -d)
-tmp_cache=$(mktemp -d)
-tmp_env=$(mktemp -d)
+source "$BP_DIR/lib/version.sh"
+
+# 23-24. normalize_bun_version accepts exact forms, rejects ranges
+for vcase in "1.3.13:v1.3.13" "v1.3.13:v1.3.13" "bun-v1.3.13:v1.3.13" "latest:latest" "canary:canary"; do
+  raw="${vcase%%:*}"; want="${vcase##*:}"
+  got=$(normalize_bun_version "$raw")
+  [ "$got" = "$want" ] \
+    && pass "normalize_bun_version '$raw' -> '$want'" \
+    || fail "normalize_bun_version '$raw' gave '$got', want '$want'"
+done
+for bad in ">=1.0.0" "^1.3.0" "~1.3.0" "" "abc" "1.3"; do
+  if normalize_bun_version "$bad" >/dev/null 2>&1; then
+    fail "normalize_bun_version should reject '$bad'"
+  else
+    pass "normalize_bun_version rejects '$bad'"
+  fi
+done
+
+# 24. runtime.txt guard handles foreign values (behavior covered live in #27-28)
+expect_grep() { # $1=pattern $2=file $3=message
+  grep -q "$1" "$2" && pass "$3" || fail "$3"
+}
+expect_grep "Ignoring runtime.txt" "$BP_DIR/bin/compile" "compile ignores foreign runtime.txt"
+expect_grep "set -f" "$BP_DIR/bin/compile" "BUN_INSTALL_FLAGS split disables globbing"
+
+# 25. ENV_DIR blocklist covers dynamic-loader variables
+for blocked in "LD_AUDIT" "LD_CONFIG" "PS4"; do
+  expect_grep "$blocked" "$BP_DIR/bin/compile" "ENV_DIR blocklist covers $blocked"
+done
+
+# Section 6: Compile + Release integration test
+
+# 26. compile and release integration test (end-to-end)
+new_tmp tmp_app
+new_tmp tmp_cache
+new_tmp tmp_env
 
 # The standard x64 Bun binary requires AVX2 and crashes (SIGILL) on CPUs without
 # it (e.g. some low-power Intel/AMD). Use the baseline variant there. We pin a
@@ -258,10 +204,7 @@ echo "v$TEST_BUN_VERSION" > "$tmp_app/.bun-version"
 if ! curl -fsSI --max-time 10 >/dev/null 2>&1 \
      "https://github.com/oven-sh/bun/releases/download/bun-v${TEST_BUN_VERSION}/bun-linux-x64.zip"; then
   echo "  SKIP: compile integration test (no network access to GitHub)"
-  unset BUN_BINARY_VARIANT
-  rm -rf "$tmp_app" "$tmp_cache" "$tmp_env"
 else
-  # Run compile and capture output to prevent spamming the console, but save it in case of error
   if compile_out=$("$BP_DIR/bin/compile" "$tmp_app" "$tmp_cache" "$tmp_env" 2>&1); then
     pass "compile successfully builds a basic app"
   else
@@ -269,16 +212,9 @@ else
     fail "compile failed on a basic app"
   fi
 
-  # Run release and check YAML
-  release_out=$("$BP_DIR/bin/release" "$tmp_app")
-  if echo "$release_out" | grep -q "web: bun run start"; then
-    pass "release outputs correct web process type"
-  else
-    echo "$release_out"
-    fail "release output missing 'web: bun run start'"
-  fi
+  expect_release_contains "$tmp_app" "web: bun run start" "release outputs correct web process type"
 
-  # 24. Regression: default "latest" resolution must not leak log output
+  # 27. Regression: default "latest" resolution must not leak log output
   # into $BUN_VERSION via command substitution (stdout capture). This path
   # is what unpinned apps hit on every build.
   rm -f "$tmp_app/.bun-version"
@@ -300,9 +236,7 @@ else
   else
     fail "binary cache missing or keyed by corrupted version string"
   fi
-
-  unset BUN_BINARY_VARIANT
-  rm -rf "$tmp_app" "$tmp_cache" "$tmp_env"
 fi
+unset BUN_BINARY_VARIANT || true
 
 echo "-----> All tests passed"

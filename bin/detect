@@ -55,7 +55,7 @@ if [ -f "$BUILD_DIR/package.json" ]; then
     fi
 
     # Fallback to context-aware grep if jq is missing.
-    if grep -A 10 '"engines"' "$BUILD_DIR/package.json" 2>/dev/null \
+    if grep -A 30 '"engines"' "$BUILD_DIR/package.json" 2>/dev/null \
          | grep -q '"bun"[[:space:]]*:'; then
       echo "Bun"; exit 0
     fi

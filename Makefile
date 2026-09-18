@@ -6,4 +6,4 @@ test:
 
 lint:
 	@echo "Running shellcheck..."
-	shellcheck bin/compile bin/detect bin/release bin/test lib/json.sh
+	shellcheck bin/compile bin/detect bin/release bin/test lib/json.sh lib/version.sh

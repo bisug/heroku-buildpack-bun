@@ -253,7 +253,7 @@ If no matching scripts exist, the buildpack scans for common entry files and cre
 | `BUN_VERSION` | `latest` | Exact Bun version, `latest`, or `canary`. |
 | `BUN_BINARY_VARIANT` | `standard` | Set to `baseline` to use `bun-linux-x64-baseline.zip` on x64 dynos. |
 | `BUN_LATEST_TTL_SECONDS` | `3600` | Cache TTL for resolving `latest` from the GitHub releases API. |
-| `BUN_INSTALL_FLAGS` | empty | Extra space-separated flags appended to `bun install`. |
+| `BUN_INSTALL_FLAGS` | empty | Extra space-separated flags appended to `bun install` (no glob expansion; no quoted multi-word flags). |
 | `BUN_SKIP_INSTALL` | `false` | Skip dependency installation. |
 | `BUN_SKIP_BUILD` | `false` | Skip the `build` script. |
 | `BUN_SKIP_HEROKU_PREBUILD` | `false` | Skip the `heroku-prebuild` script. |
@@ -269,7 +269,13 @@ heroku config:set BUN_INSTALL_FLAGS="--ignore-scripts"
 heroku config:set BUN_SKIP_BUILD=true
 ```
 
-`BUN_INSTALL_FLAGS` is intentionally simple. For registry configuration, scopes, auth, and other structured install behavior, prefer `bunfig.toml`.
+`BUN_INSTALL_FLAGS` is intentionally simple: space-separated, passed literally
+(no glob expansion), with no support for quoted multi-word flags. For registry
+configuration, scopes, auth, and other structured install behavior, prefer `bunfig.toml`.
+
+`ENV_DIR` values are single-line: trailing newlines are stripped on import and
+embedded newlines do not round-trip. Critical vars (`PATH`, `HOME`,
+`LD_PRELOAD`, `LD_AUDIT`, `LD_CONFIG`, `BASH_ENV`, etc.) are never overwritten.
 
 ## Multiple Buildpacks
 
@@ -330,9 +336,14 @@ This buildpack is designed to be conservative by default:
 - Downloads release ZIPs directly from `https://github.com/oven-sh/bun/releases`.
 - Does not execute remote installer scripts.
 - Validates that the downloaded artifact is a ZIP archive before extracting.
+- Verifies the extracted `bun` binary runs (`bun --version`) before use.
 - Copies only the expected `bun` binary from the release archive.
-- Does not allow `ENV_DIR` config vars to overwrite critical values such as `PATH`, `HOME`, `LD_PRELOAD`, or `BASH_ENV`.
+- Does not allow `ENV_DIR` config vars to overwrite critical values such as `PATH`, `HOME`, `LD_PRELOAD`, `LD_AUDIT`, or `BASH_ENV`.
 - Shell-quotes generated runtime defaults before writing profile/export files.
+- Bun does not publish per-artifact checksums for release ZIPs, so checksum
+  pinning is not currently possible; integrity relies on HTTPS from GitHub plus
+  archive-structure and binary smoke checks. Pin an exact `BUN_VERSION` for
+  repeatable builds.
 
 You are still responsible for auditing application dependencies, lockfiles, package scripts, and private registry configuration.
 

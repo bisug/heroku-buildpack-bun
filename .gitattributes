@@ -7,6 +7,7 @@ bin/detect   text eol=lf
 bin/release  text eol=lf
 bin/test     text eol=lf
 lib/json.sh  text eol=lf
+lib/version.sh text eol=lf
 
 # Documentation files
 *.md         text eol=lf

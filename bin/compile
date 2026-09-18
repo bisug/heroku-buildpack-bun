@@ -29,6 +29,7 @@ if [[ -z "$BUILD_DIR" || ! -d "$BUILD_DIR" ]]; then
 fi
 
 source "$BP_DIR/lib/json.sh"
+source "$BP_DIR/lib/version.sh"
 
 missing_tools=()
 for tool in curl jq unzip; do
@@ -95,40 +96,16 @@ export_env_dir() {
     fi
 
     case "$key" in
-      PATH|HOME|IFS|GIT_DIR|CPATH|CPPATH|LD_PRELOAD|LIBRARY_PATH|LD_LIBRARY_PATH|BASH_ENV|ENV|SHELLOPTS|BUILDPACK_URL|SOURCE_VERSION)
+      PATH|HOME|IFS|GIT_DIR|CPATH|CPPATH|LD_PRELOAD|LD_AUDIT|LD_CONFIG|LIBRARY_PATH|LD_LIBRARY_PATH|BASH_ENV|ENV|SHELLOPTS|BUILDPACK_URL|SOURCE_VERSION|PS4|GLOBIGNORE|TMPDIR|PWD|SHELL)
         continue
         ;;
     esac
 
+    # NOTE: Heroku ENV_DIR files have no trailing-newline encoding, so command
+    # substitution intentionally strips trailing newlines. Values containing
+    # newlines cannot round-trip through ENV_DIR; prefer single-line values.
     export "$key=$(cat "$entry")"
   done
-}
-
-normalize_bun_version() {
-  local raw="$1"
-
-  raw=$(printf "%s" "$raw" | tr -d '[:space:]')
-  case "$raw" in
-    "") return 1 ;;
-    latest|canary)
-      printf "%s\n" "$raw"
-      return 0
-      ;;
-    bun-v*|bun-[0-9]*)
-      raw="${raw#bun-}"
-      ;;
-  esac
-
-  if [[ "$raw" =~ ^[0-9] ]]; then
-    raw="v${raw}"
-  fi
-
-  if [[ "$raw" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
-    printf "%s\n" "$raw"
-    return 0
-  fi
-
-  return 1
 }
 
 resolve_latest_bun_version() {
@@ -231,9 +208,18 @@ elif [[ -f "runtime.bun.txt" ]]; then
   BUN_VERSION_SOURCE="runtime.bun.txt"
 elif [[ -f "runtime.txt" ]]; then
   runtime_value=$(tr -d '[:space:]' < "runtime.txt")
-  if [[ "$runtime_value" =~ ^([0-9]|v[0-9]|bun-) ]]; then
-    BUN_VERSION_RAW="$runtime_value"
-    BUN_VERSION_SOURCE="runtime.txt"
+  if [[ -z "$runtime_value" ]]; then
+    puts_warn "Ignoring empty runtime.txt (belongs to another buildpack?)."
+  elif [[ "$runtime_value" =~ ^([0-9]|v[0-9]|bun-) ]]; then
+    if normalize_bun_version "$runtime_value" >/dev/null; then
+      BUN_VERSION_RAW="$runtime_value"
+      BUN_VERSION_SOURCE="runtime.txt"
+    else
+      puts_warn "Ignoring unparseable runtime.txt value for Bun: $runtime_value"
+      puts_warn "If runtime.txt belongs to another buildpack, prefer BUN_VERSION, .bun-version, or runtime.bun.txt for Bun."
+    fi
+  else
+    puts_warn "Ignoring runtime.txt (not a Bun version; belongs to another buildpack?)."
   fi
 fi
 
@@ -476,7 +462,11 @@ if [[ -f "package.json" ]]; then
     fi
 
     if [[ -n "${BUN_INSTALL_FLAGS:-}" ]]; then
+      # BUN_INSTALL_FLAGS is intentionally simple space-separated flags.
+      # Disable globbing so values like "*" are passed literally to bun.
+      set -f
       read -r -a extra_install_args <<< "$BUN_INSTALL_FLAGS"
+      set +f
       install_args+=("${extra_install_args[@]}")
     fi
 
