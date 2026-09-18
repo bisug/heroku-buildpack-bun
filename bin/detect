@@ -14,7 +14,10 @@ fi
 # Bun's text lockfile (default since v1.2), legacy binary lockfile,
 # version pins, and config files.
 for _f in bun.lock bun.lockb .bun-version runtime.bun.txt bunfig.toml .bunfig.toml; do
-  if [[ -f "$BUILD_DIR/$_f" ]]; then echo "Bun"; exit 0; fi
+  if [[ -f "$BUILD_DIR/$_f" ]]; then
+    echo "Bun"
+    exit 0
+  fi
 done
 
 # Tier 2: package.json Bun-specific fields (high confidence)
@@ -24,23 +27,27 @@ if [ -f "$BUILD_DIR/package.json" ]; then
   if command -v jq >/dev/null 2>&1; then
     # packageManager field explicitly set to bun (e.g. "bun@1.2.0")
     if jq -e '.packageManager? | strings | startswith("bun@")' "$BUILD_DIR/package.json" >/dev/null 2>&1; then
-      echo "Bun"; exit 0
+      echo "Bun"
+      exit 0
     fi
 
     # engines.bun field present (e.g. "engines": { "bun": "1.2.0" })
     if jq -e '.engines? | objects | has("bun")' "$BUILD_DIR/package.json" >/dev/null 2>&1; then
-      echo "Bun"; exit 0
+      echo "Bun"
+      exit 0
     fi
   else
     if grep -q '"packageManager"[[:space:]]*:[[:space:]]*"bun@' \
-         "$BUILD_DIR/package.json" 2>/dev/null; then
-      echo "Bun"; exit 0
+      "$BUILD_DIR/package.json" 2>/dev/null; then
+      echo "Bun"
+      exit 0
     fi
 
     # Fallback to context-aware grep if jq is missing.
     if grep -A 30 '"engines"' "$BUILD_DIR/package.json" 2>/dev/null \
-         | grep -q '"bun"[[:space:]]*:'; then
-      echo "Bun"; exit 0
+      | grep -q '"bun"[[:space:]]*:'; then
+      echo "Bun"
+      exit 0
     fi
   fi
 

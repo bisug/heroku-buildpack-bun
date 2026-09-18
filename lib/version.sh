@@ -9,7 +9,7 @@ normalize_bun_version() {
   raw=${raw//[[:space:]]/}
   case "$raw" in
     "") return 1 ;;
-    latest|canary)
+    latest | canary)
       printf "%s\n" "$raw"
       return 0
       ;;

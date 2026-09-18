@@ -17,12 +17,15 @@ set -euo pipefail
 #   No matching scripts  -> falls back to common entry file for web
 
 BUILD_DIR="${1:-}"
-BP_DIR=$(cd "$(dirname "$0")"; cd ..; pwd)
+BP_DIR=$(
+  cd "$(dirname "$0")"
+  cd ..
+  pwd
+)
 
 source "$BP_DIR/lib/json.sh"
 
 PKG="$BUILD_DIR/package.json"
-
 
 # Build the default_process_types block.
 PROCESS_TYPES=""
@@ -49,7 +52,7 @@ if [[ ! -f "$BUILD_DIR/Procfile" ]]; then
   # scan for common entry files and assume it's a web dyno.
   if [[ -z "$PROCESS_TYPES" ]]; then
     for entry in "index.ts" "index.js" "src/index.ts" "src/index.js" \
-                 "main.ts" "main.js" "app.ts" "app.js" "server.ts" "server.js"; do
+      "main.ts" "main.js" "app.ts" "app.js" "server.ts" "server.js"; do
       if [[ -f "$BUILD_DIR/$entry" ]]; then
         PROCESS_TYPES+="  web: bun run $entry"$'\n'
         break
