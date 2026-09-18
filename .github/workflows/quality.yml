@@ -21,23 +21,28 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
 
       - name: Strict ShellCheck (errors only, fail on findings)
-        uses: ludeeus/action-shellcheck@master
+        uses: ludeeus/action-shellcheck@00b27aa7cb85167568cb48a3838b75f4265f2bca # master
         with:
           severity: error
           check_together: 'yes'
 
       - name: Enforce shell formatting
-        uses: mvdan/shfmt@v5
-        with:
-          isothermality: true
-          args: -d -i 2 -ci -bn bin/compile bin/detect bin/release bin/test lib/json.sh lib/version.sh
+        run: |
+          SHFMT_VERSION=v5.7.0
+          curl -fsSL -o /tmp/shfmt "https://github.com/mvdan/sh/releases/download/${SHFMT_VERSION}/shfmt_${SHFMT_VERSION#v}_linux_amd64"
+          chmod +x /tmp/shfmt
+          /tmp/shfmt -d -i 2 -ci -bn bin/compile bin/detect bin/release bin/test lib/json.sh lib/version.sh
 
       - name: No leftover debug or dangerous patterns
         run: |
-          ! grep -RInE 'set -x|TODO|FIXME|XXX|rm -rf /|chmod 777' bin lib
-          ! grep -RInE 'curl[^|]*\|[[:space:]]*(ba)?sh' bin lib
+          if grep -RInE 'set -x|TODO|FIXME|XXX|rm -rf /|chmod 777' bin lib; then
+            echo "::error::debug or dangerous pattern found"; exit 1
+          fi
+          if grep -RInE 'curl[^|]*\|[[:space:]]*(ba)?sh' bin lib; then
+            echo "::error::curl-pipe-shell pattern found"; exit 1
+          fi

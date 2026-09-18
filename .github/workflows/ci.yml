@@ -19,21 +19,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
 
       - name: Run ShellCheck
-        uses: ludeeus/action-shellcheck@master
+        uses: ludeeus/action-shellcheck@00b27aa7cb85167568cb48a3838b75f4265f2bca # master
         with:
           severity: warning
           check_together: 'yes'
 
       - name: Check shell formatting
-        uses: mvdan/shfmt@v5
-        with:
-          isothermality: true
-          args: -d -i 2 -ci -bn bin/compile bin/detect bin/release bin/test lib/json.sh lib/version.sh
+        run: |
+          SHFMT_VERSION=v5.7.0
+          curl -fsSL -o /tmp/shfmt "https://github.com/mvdan/sh/releases/download/${SHFMT_VERSION}/shfmt_${SHFMT_VERSION#v}_linux_amd64"
+          chmod +x /tmp/shfmt
+          /tmp/shfmt -d -i 2 -ci -bn bin/compile bin/detect bin/release bin/test lib/json.sh lib/version.sh
 
       - name: Bash syntax check
         run: |
@@ -50,7 +51,7 @@ jobs:
     needs: lint
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
 
@@ -81,7 +82,7 @@ jobs:
     needs: [lint, detect-release]
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
 
@@ -96,10 +97,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
 
       - name: Run actionlint
-        uses: raven-actions/actionlint@v2
+        uses: raven-actions/actionlint@3d39aea434753780c3b3d4a1a31c854b4dbf49d7 # v2
 

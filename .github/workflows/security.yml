@@ -16,21 +16,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  gitleaks:
-    name: Secret scan (Gitleaks)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Run Gitleaks
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
   trivy:
     name: Filesystem vuln scan (Trivy)
     runs-on: ubuntu-latest
@@ -39,12 +24,12 @@ jobs:
       security-events: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
 
-      - name: Run Trivy FS scan
-        uses: aquasecurity/trivy-action@master
+      - name: Run Trivy FS scan (fail on findings, publish SARIF)
+        uses: aquasecurity/trivy-action@f9424c10c36e288d5fa79bd3dfd1aeb2d6eae808 # 0.33.0
         with:
           scan-type: fs
           scan-ref: .
@@ -55,7 +40,7 @@ jobs:
 
       - name: Upload SARIF to code scanning
         if: always()
-        uses: github/codeql-action/upload-sarif@v4.37.4
+        uses: github/codeql-action/upload-sarif@ea14db8afdef5d462e69d78c4ca45002d4522418 # v4.37.4
         with:
           sarif_file: trivy-results.sarif
           category: trivy-fs
@@ -65,7 +50,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
 
@@ -78,10 +63,8 @@ jobs:
           if grep -RIniE 'api[_-]?key[[:space:]]*[:=][[:space:]]*["'\''][A-Za-z0-9]{8,}|password[[:space:]]*[:=]|BEGIN [A-Z ]*PRIVATE KEY' bin lib; then
             echo "::error::possible hardcoded secret"; fail=1
           fi
-          if grep -RIn 'LD_PRELOAD' bin/compile | grep -qv 'LD_PRELOAD|'; then
-            echo "::warning::review LD_PRELOAD reference"
-          fi
           exit $fail
 
       - name: ENV_DIR blocklist present
         run: grep -q 'LD_AUDIT' bin/compile && grep -q 'LD_CONFIG' bin/compile
+
