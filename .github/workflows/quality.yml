@@ -1,0 +1,43 @@
+name: Quality
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '17 6 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  shell-quality:
+    name: Shell quality (shellcheck strict + shfmt)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Strict ShellCheck (errors only, fail on findings)
+        uses: ludeeus/action-shellcheck@master
+        with:
+          severity: error
+          check_together: 'yes'
+
+      - name: Enforce shell formatting
+        uses: mvdan/shfmt@v5
+        with:
+          isothermality: true
+          args: -d -i 2 -ci -bn bin/compile bin/detect bin/release bin/test lib/json.sh lib/version.sh
+
+      - name: No leftover debug or dangerous patterns
+        run: |
+          ! grep -RInE 'set -x|TODO|FIXME|XXX|rm -rf /|chmod 777' bin lib
+          ! grep -RInE 'curl[^|]*\|[[:space:]]*(ba)?sh' bin lib

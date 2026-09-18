@@ -9,30 +9,97 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   lint:
-    name: ShellCheck Lint
+    name: ShellCheck + shfmt + syntax
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
-      - name: Install shellcheck
-        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: Run ShellCheck
+        uses: ludeeus/action-shellcheck@master
+        with:
+          severity: warning
+          check_together: 'yes'
 
-      - name: Run shellcheck
-        run: make lint
+      - name: Check shell formatting
+        uses: mvdan/shfmt@v5
+        with:
+          isothermality: true
+          args: -d -i 2 -ci -bn bin/compile bin/detect bin/release bin/test lib/json.sh lib/version.sh
 
-  test:
-    name: Buildpack Tests
+      - name: Bash syntax check
+        run: |
+          for f in bin/compile bin/detect bin/release bin/test lib/json.sh lib/version.sh; do
+            bash -n "$f"
+          done
+
+      - name: Validate workflow YAML
+        run: python3 -c "import glob,sys,yaml; [yaml.safe_load(open(f)) for f in glob.glob('.github/workflows/*.yml')]; print('YAML OK')"
+
+  detect-release:
+    name: detect + release smoke
     runs-on: ubuntu-latest
     needs: lint
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y curl jq unzip
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends curl jq unzip
+
+      - name: detect accepts Bun app, rejects plain Node app
+        run: |
+          t=$(mktemp -d)
+          echo '{"engines":{"bun":"1.2.0"}}' > "$t/package.json"
+          ./bin/detect "$t" | grep -q Bun
+          n=$(mktemp -d)
+          echo '{"engines":{"node":">=18"}}' > "$n/package.json"
+          if ./bin/detect "$n"; then echo "detect must reject node-only app"; exit 1; fi
+          rm -rf "$t" "$n"
+
+      - name: release emits process types
+        run: |
+          t=$(mktemp -d)
+          echo '{"scripts":{"start":"bun index.js","worker":"bun w.js"}}' > "$t/package.json"
+          ./bin/release "$t" | grep -q "web: bun run start"
+          ./bin/release "$t" | grep -q "worker: bun run worker"
+          rm -rf "$t"
+
+  test:
+    name: Buildpack Tests
+    runs-on: ubuntu-latest
+    needs: [lint, detect-release]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends curl jq unzip
 
       - name: Run tests
         run: make test
+
+  actionlint:
+    name: Workflow lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Run actionlint
+        uses: raven-actions/actionlint@v2
+

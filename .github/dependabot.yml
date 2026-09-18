@@ -4,4 +4,12 @@ updates:
     directory: "/"
     schedule:
       interval: "daily"
+    groups:
+      codeql:
+        patterns:
+          - "github/codeql-action"
+      checkout:
+        patterns:
+          - "actions/checkout"
+
 

@@ -1,0 +1,87 @@
+name: Security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '29 6 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gitleaks:
+    name: Secret scan (Gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  trivy:
+    name: Filesystem vuln scan (Trivy)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Run Trivy FS scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: sarif
+          output: trivy-results.sarif
+          severity: CRITICAL,HIGH
+          exit-code: '1'
+
+      - name: Upload SARIF to code scanning
+        if: always()
+        uses: github/codeql-action/upload-sarif@v4.37.4
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy-fs
+
+  shell-audit:
+    name: Buildpack security audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: No curl-pipe-shell, no eval, no hardcoded secrets
+        run: |
+          fail=0
+          if grep -RInE 'curl[^|]*\|[[:space:]]*(ba)?sh|eval[[:space:]]' bin lib; then
+            echo "::error::curl-pipe-shell or eval found"; fail=1
+          fi
+          if grep -RIniE 'api[_-]?key[[:space:]]*[:=][[:space:]]*["'\''][A-Za-z0-9]{8,}|password[[:space:]]*[:=]|BEGIN [A-Z ]*PRIVATE KEY' bin lib; then
+            echo "::error::possible hardcoded secret"; fail=1
+          fi
+          if grep -RIn 'LD_PRELOAD' bin/compile | grep -qv 'LD_PRELOAD|'; then
+            echo "::warning::review LD_PRELOAD reference"
+          fi
+          exit $fail
+
+      - name: ENV_DIR blocklist present
+        run: grep -q 'LD_AUDIT' bin/compile && grep -q 'LD_CONFIG' bin/compile
