@@ -29,7 +29,7 @@ for tool in jq curl unzip bash; do
 done
 
 tmpdirs=()
-new_tmp() { local _var=$1 _d; _d=$(mktemp -d); tmpdirs+=("$_d"); printf -v "$_var" '%s' "$_d"; }
+new_tmp() { local _d; _d=$(mktemp -d); tmpdirs+=("$_d"); printf '%s\n' "$_d"; }
 cleanup_test_tmp() { rm -rf "${tmpdirs[@]:-}"; }
 trap cleanup_test_tmp EXIT
 
@@ -54,46 +54,46 @@ expect_release_contains() { # $1=dir $2=pattern $3=message
 # Section 2: Detection tests
 
 # 3. detect rejects a non-Bun directory
-new_tmp tmp_empty
+tmp_empty=$(new_tmp); tmpdirs+=("tmp_empty")
 expect_detect 1 "$tmp_empty" "detect correctly rejects non-Bun directory"
 
 # 4. detect rejects a bare package.json (no Bun signals)
-new_tmp tmp_pkg
+tmp_pkg=$(new_tmp); tmpdirs+=("tmp_pkg")
 echo '{}' > "$tmp_pkg/package.json"
 expect_detect 1 "$tmp_pkg" "detect correctly rejects bare package.json"
 
 # 5. detect accepts a directory with .bun-version
-new_tmp tmp_bun
+tmp_bun=$(new_tmp); tmpdirs+=("tmp_bun")
 echo 'v1.3.13' > "$tmp_bun/.bun-version"
 expect_detect 0 "$tmp_bun" "detect correctly accepts directory with .bun-version"
 
 # 6. detect accepts a directory with bun.lock
-new_tmp tmp_lock
+tmp_lock=$(new_tmp); tmpdirs+=("tmp_lock")
 echo '{}' > "$tmp_lock/bun.lock"
 expect_detect 0 "$tmp_lock" "detect correctly accepts directory with bun.lock"
 
 # 7. detect accepts a directory with bun.lockb (legacy binary lockfile)
-new_tmp tmp_lockb
+tmp_lockb=$(new_tmp); tmpdirs+=("tmp_lockb")
 touch "$tmp_lockb/bun.lockb"
 expect_detect 0 "$tmp_lockb" "detect correctly accepts directory with bun.lockb"
 
 # 8. detect accepts package.json with packageManager set to bun
-new_tmp tmp_pm
+tmp_pm=$(new_tmp); tmpdirs+=("tmp_pm")
 echo '{"packageManager": "bun@1.2.0"}' > "$tmp_pm/package.json"
 expect_detect 0 "$tmp_pm" "detect correctly accepts packageManager=bun"
 
 # 9. detect accepts package.json with engines.bun
-new_tmp tmp_engines
+tmp_engines=$(new_tmp); tmpdirs+=("tmp_engines")
 echo '{"engines": {"bun": ">=1.0.0"}}' > "$tmp_engines/package.json"
 expect_detect 0 "$tmp_engines" "detect correctly accepts engines.bun"
 
 # 10. detect accepts bunfig.toml
-new_tmp tmp_bunfig
+tmp_bunfig=$(new_tmp); tmpdirs+=("tmp_bunfig")
 touch "$tmp_bunfig/bunfig.toml"
 expect_detect 0 "$tmp_bunfig" "detect correctly accepts bunfig.toml"
 
 # 11. detect rejects package.json with engines.node but no engines.bun
-new_tmp tmp_node
+tmp_node=$(new_tmp); tmpdirs+=("tmp_node")
 echo '{"engines": {"node": ">=18"}}' > "$tmp_node/package.json"
 expect_detect 1 "$tmp_node" "detect correctly rejects engines.node without engines.bun"
 
@@ -105,7 +105,7 @@ expect_detect 1 "/tmp/this-path-does-not-exist-$$" "detect correctly rejects non
 source "$BP_DIR/lib/json.sh"
 
 # 13-16. has_script matrix
-new_tmp tmp_json
+tmp_json=$(new_tmp); tmpdirs+=("tmp_json")
 echo '{"scripts": {"start": "bun index.js", "build": "bun build"}}' > "$tmp_json/package.json"
 echo '{}' > "$tmp_json/no-scripts.json"
 echo '{"scripts": null}' > "$tmp_json/null-scripts.json"
@@ -127,22 +127,22 @@ expect_invalid "$tmp_json/package.json" "false" "is_invalid_json_file correctly 
 # Section 4: Release script tests
 
 # 19. release outputs web: bun run start for start script
-new_tmp tmp_rel
+tmp_rel=$(new_tmp); tmpdirs+=("tmp_rel")
 echo '{"scripts": {"start": "bun run index.js"}}' > "$tmp_rel/package.json"
 expect_release_contains "$tmp_rel" "web: bun run start" "release outputs 'web: bun run start' for start script"
 
 # 20. release outputs worker process type
-new_tmp tmp_worker
+tmp_worker=$(new_tmp); tmpdirs+=("tmp_worker")
 echo '{"scripts": {"start": "bun run index.js", "worker": "bun run worker.js"}}' > "$tmp_worker/package.json"
 expect_release_contains "$tmp_worker" "worker: bun run worker" "release outputs worker process type"
 
 # 21. release prefers 'web' script over 'start'
-new_tmp tmp_web
+tmp_web=$(new_tmp); tmpdirs+=("tmp_web")
 echo '{"scripts": {"web": "bun serve.js", "start": "bun index.js"}}' > "$tmp_web/package.json"
 expect_release_contains "$tmp_web" "web: bun run web" "release prefers 'web' script over 'start'"
 
 # 22. release falls back to entry file when no scripts defined
-new_tmp tmp_entry
+tmp_entry=$(new_tmp); tmpdirs+=("tmp_entry")
 echo '{}' > "$tmp_entry/package.json"
 echo 'console.log("hello")' > "$tmp_entry/index.ts"
 expect_release_contains "$tmp_entry" "web: bun run index.ts" "release falls back to index.ts entry file"
@@ -182,9 +182,9 @@ done
 # Section 6: Compile + Release integration test
 
 # 26. compile and release integration test (end-to-end)
-new_tmp tmp_app
-new_tmp tmp_cache
-new_tmp tmp_env
+tmp_app=$(new_tmp); tmpdirs+=("tmp_app")
+tmp_cache=$(new_tmp); tmpdirs+=("tmp_cache")
+tmp_env=$(new_tmp); tmpdirs+=("tmp_env")
 
 # The standard x64 Bun binary requires AVX2 and crashes (SIGILL) on CPUs without
 # it (e.g. some low-power Intel/AMD). Use the baseline variant there. We pin a

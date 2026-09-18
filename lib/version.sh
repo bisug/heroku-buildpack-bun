@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # lib/version.sh - Bun version normalization (sourced by bin/compile and bin/test)
 # Accepts exact versions (1.3.13, v1.3.13, bun-v1.3.13), "latest", "canary".
 # Rejects ranges (^, ~, >=) so builds stay repeatable.
