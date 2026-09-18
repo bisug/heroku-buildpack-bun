@@ -33,7 +33,11 @@ jobs:
 
       - name: Enforce shell formatting
         run: |
-          go run mvdan.sh/sh/v3/cmd/shfmt@v3.9.0 -d -i 2 -ci -bn bin/compile bin/detect bin/release bin/test lib/json.sh lib/version.sh
+          SHFMT_RELEASE="https://github.com/mvdan/sh/releases/download/v3.9.0"
+          curl --retry 5 --retry-all-errors -fsSL -o /tmp/shfmt "$SHFMT_RELEASE/shfmt_v3.9.0_linux_amd64"
+          echo "$(curl --retry 5 --retry-all-errors -fsSL "$SHFMT_RELEASE/sha256sums.txt" | grep 'shfmt_v3.9.0_linux_amd64' | cut -d' ' -f1)  /tmp/shfmt" | sha256sum -c -
+          chmod +x /tmp/shfmt
+          /tmp/shfmt -d -i 2 -ci -bn bin/compile bin/detect bin/release bin/test lib/json.sh lib/version.sh
 
       - name: No leftover debug or dangerous patterns
         run: |
