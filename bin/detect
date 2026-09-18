@@ -10,29 +10,12 @@ if [[ -z "$BUILD_DIR" ]] || [[ ! -d "$BUILD_DIR" ]]; then
   exit 1
 fi
 
-# Tier 1: Bun-exclusive files (highest confidence)
-
-# Bun's text lockfile (default since v1.2)
-if [ -f "$BUILD_DIR/bun.lock" ]; then
-  echo "Bun"; exit 0
-fi
-
-# Bun's legacy binary lockfile
-if [ -f "$BUILD_DIR/bun.lockb" ]; then
-  echo "Bun"; exit 0
-fi
-
-# Explicit Bun version pin files
-if [ -f "$BUILD_DIR/.bun-version" ] || \
-   [ -f "$BUILD_DIR/runtime.bun.txt" ]; then
-  echo "Bun"; exit 0
-fi
-
-# Bun config file
-if [ -f "$BUILD_DIR/bunfig.toml" ] || \
-   [ -f "$BUILD_DIR/.bunfig.toml" ]; then
-  echo "Bun"; exit 0
-fi
+# Tier 1: Bun-exclusive files (highest confidence, zero forks)
+# Bun's text lockfile (default since v1.2), legacy binary lockfile,
+# version pins, and config files.
+for _f in bun.lock bun.lockb .bun-version runtime.bun.txt bunfig.toml .bunfig.toml; do
+  if [[ -f "$BUILD_DIR/$_f" ]]; then echo "Bun"; exit 0; fi
+done
 
 # Tier 2: package.json Bun-specific fields (high confidence)
 

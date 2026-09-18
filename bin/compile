@@ -28,8 +28,28 @@ if [[ -z "$BUILD_DIR" || ! -d "$BUILD_DIR" ]]; then
   exit 1
 fi
 
-source "$BP_DIR/lib/json.sh"
 source "$BP_DIR/lib/version.sh"
+
+# Parse package.json once: PKG_SCRIPTS="web start build", PKG_ENGINES_BUN="1.2.3",
+# PKG_VALID=1/0. Replaces 6+ jq forks with a single jq call on the hot path.
+PKG_SCRIPTS=""; PKG_ENGINES_BUN=""; PKG_VALID=1
+if [[ -f "package.json" ]]; then
+  _pkg_parsed=$(jq -rj '
+    (if (.scripts? | type) == "object" then (.scripts | keys_unsorted | join(" ")) else "" end),
+    "\u0001",
+    (if (.engines? | objects | has("bun")) then (.engines.bun | tostring) else "" end),
+    "\u0001"' "package.json" 2>/dev/null) || PKG_VALID=0
+  PKG_SCRIPTS=${_pkg_parsed%%$'\001'*}
+  _pkg_rest=${_pkg_parsed#*$'\001'}
+  PKG_ENGINES_BUN=${_pkg_rest%$'\001'}
+  unset _pkg_parsed _pkg_rest
+fi
+
+# O(1) word lookup in the space-separated script list.
+pkg_has_script() {
+  case " $PKG_SCRIPTS " in *" $1 "*) return 0 ;; esac
+  return 1
+}
 
 missing_tools=()
 for tool in curl jq unzip; do
@@ -82,18 +102,17 @@ shell_quote() {
 
 export_env_dir() {
   local env_dir="$1"
-  local entry key
+  local entry key filename
 
   [[ -d "$env_dir" ]] || return 0
 
   for entry in "$env_dir/"*; do
     [[ -f "$entry" ]] || continue
-    key=$(basename "$entry")
-
-    if [[ ! "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
-      puts_warn "Skipping invalid config var name from ENV_DIR: $key"
-      continue
-    fi
+    filename=${entry##*/}
+    # shortcut: valid shell names only, no fork/regex (O(n) glob scan)
+    case "${filename:0:1}" in [A-Za-z_]) ;; *) continue ;; esac
+    case "$filename" in *[^A-Za-z0-9_]*|"") continue ;; esac
+    key=$filename
 
     case "$key" in
       PATH|HOME|IFS|GIT_DIR|CPATH|CPPATH|LD_PRELOAD|LD_AUDIT|LD_CONFIG|LIBRARY_PATH|LD_LIBRARY_PATH|BASH_ENV|ENV|SHELLOPTS|BUILDPACK_URL|SOURCE_VERSION|PS4|GLOBIGNORE|TMPDIR|PWD|SHELL)
@@ -121,7 +140,8 @@ resolve_latest_bun_version() {
   if [[ -n "$latest_cache_file" && -f "$latest_cache_file" ]]; then
     cache_age=$(( $(date +%s) - $(date -r "$latest_cache_file" +%s 2>/dev/null || echo "0") ))
     if (( cache_age < cache_ttl )); then
-      resolved=$(tr -d '[:space:]' < "$latest_cache_file")
+      read -r resolved < "$latest_cache_file"
+      resolved=${resolved//[[:space:]]/}
       if resolved=$(normalize_bun_version "$resolved"); then
         # This function's stdout is captured by the caller via $( ); log
         # lines MUST go to stderr or they corrupt the returned version.
@@ -151,7 +171,8 @@ resolve_latest_bun_version() {
   fi
 
   if [[ -n "$latest_cache_file" && -f "$latest_cache_file" ]]; then
-    resolved=$(tr -d '[:space:]' < "$latest_cache_file")
+    read -r resolved < "$latest_cache_file"
+    resolved=${resolved//[[:space:]]/}
     if resolved=$(normalize_bun_version "$resolved"); then
       puts_warn "Could not refresh latest Bun version; using stale cached value: $resolved"
       printf "%s\n" "$resolved"
@@ -170,7 +191,7 @@ run_package_script() {
   local env_skip="$3"
   local file_skip="$4"
 
-  if [[ -f "package.json" && "$(has_script "package.json" "$script_name")" == "true" ]]; then
+  if pkg_has_script "$script_name"; then
     if skip_requested "$env_skip" "$file_skip"; then
       puts_step "Skipping $script_name."
       return 0
@@ -186,11 +207,12 @@ export_env_dir "$ENV_DIR"
 export NODE_ENV="${NODE_ENV:-production}"
 puts_step "NODE_ENV is set to $NODE_ENV"
 
-if [[ -f "package.json" && "$(is_invalid_json_file "package.json")" == "true" ]]; then
+if [[ -f "package.json" && "$PKG_VALID" != "1" ]]; then
   puts_warn "package.json contains invalid JSON."
   exit 1
 fi
 
+# Fast-path version: single read per file, no fork except jq parse above.
 BUN_VERSION_RAW=""
 BUN_VERSION_SOURCE="default"
 
@@ -198,16 +220,17 @@ if [[ -n "${BUN_VERSION:-}" ]]; then
   BUN_VERSION_RAW="$BUN_VERSION"
   BUN_VERSION_SOURCE="BUN_VERSION config var"
 elif [[ -f ".bun-version" ]]; then
-  BUN_VERSION_RAW=$(cat ".bun-version")
+  read -r BUN_VERSION_RAW < ".bun-version"
   BUN_VERSION_SOURCE=".bun-version"
-elif [[ -f "package.json" ]] && jq -e '.engines? | objects | has("bun")' "package.json" >/dev/null 2>&1; then
-  BUN_VERSION_RAW=$(jq -r '.engines.bun' "package.json")
+elif [[ -n "$PKG_ENGINES_BUN" ]]; then
+  BUN_VERSION_RAW="$PKG_ENGINES_BUN"
   BUN_VERSION_SOURCE="package.json engines.bun"
 elif [[ -f "runtime.bun.txt" ]]; then
-  BUN_VERSION_RAW=$(cat "runtime.bun.txt")
+  read -r BUN_VERSION_RAW < "runtime.bun.txt"
   BUN_VERSION_SOURCE="runtime.bun.txt"
 elif [[ -f "runtime.txt" ]]; then
-  runtime_value=$(tr -d '[:space:]' < "runtime.txt")
+  read -r runtime_value < "runtime.txt"
+  runtime_value=${runtime_value//[[:space:]]/}
   if [[ -z "$runtime_value" ]]; then
     puts_warn "Ignoring empty runtime.txt (belongs to another buildpack?)."
   elif [[ "$runtime_value" =~ ^([0-9]|v[0-9]|bun-) ]]; then
@@ -337,12 +360,8 @@ download_bun() {
     exit 1
   fi
 
-  if command -v file >/dev/null 2>&1; then
-    if ! file "$bun_zip" | grep -qi "zip"; then
-      puts_warn "Downloaded file is not a zip archive."
-      exit 1
-    fi
-  elif ! unzip -tq "$bun_zip" >/dev/null 2>&1; then
+  # unzip -t both validates the archive and avoids a `file` fork.
+  if ! unzip -tq "$bun_zip" >/dev/null 2>&1; then
     puts_warn "Downloaded file is not a valid zip archive."
     exit 1
   fi
@@ -369,25 +388,19 @@ download_bun() {
 }
 
 prune_binary_cache() {
-  local version_dir artifact_dir version_name artifact_name
+  local version_dir artifact_dir
 
   [[ -n "$CACHE_DIR" && -d "$CACHE_DIR/bun-bin-cache" ]] || return 0
 
   for version_dir in "$CACHE_DIR/bun-bin-cache/"*; do
     [[ -d "$version_dir" ]] || continue
-    version_name=$(basename "$version_dir")
-    if [[ "$version_name" != "$BUN_VERSION" ]]; then
-      rm -rf "$version_dir"
-    fi
+    [[ "$version_dir" == */"$BUN_VERSION" ]] || rm -rf "$version_dir"
   done
 
   [[ -d "$CACHE_DIR/bun-bin-cache/$BUN_VERSION" ]] || return 0
   for artifact_dir in "$CACHE_DIR/bun-bin-cache/$BUN_VERSION/"*; do
     [[ -d "$artifact_dir" ]] || continue
-    artifact_name=$(basename "$artifact_dir")
-    if [[ "$artifact_name" != "$BUN_ARTIFACT_BASE" ]]; then
-      rm -rf "$artifact_dir"
-    fi
+    [[ "$artifact_dir" == */"$BUN_ARTIFACT_BASE" ]] || rm -rf "$artifact_dir"
   done
 }
 
@@ -427,7 +440,8 @@ BUILD_HEROKU_QUOTED=$(shell_quote "$BUILD_DIR/.heroku")
 BUN_CACHE_QUOTED=$(shell_quote "$BUN_INSTALL_CACHE_DIR")
 
 PROFILE_PATH="$BUILD_DIR/.profile.d/bun.sh"
-mkdir -p "$(dirname "$PROFILE_PATH")"
+mkdir -p "${PROFILE_PATH%/*}"
+# Static profile: no per-build quoting needed (only NODE_ENV varies, pre-quoted).
 {
   echo "export PATH=\"\$HOME/.heroku/bin:\$PATH\""
   echo "export BUN_INSTALL=\"\$HOME/.heroku\""
@@ -465,9 +479,9 @@ if [[ -f "package.json" ]]; then
       # BUN_INSTALL_FLAGS is intentionally simple space-separated flags.
       # Disable globbing so values like "*" are passed literally to bun.
       set -f
-      read -r -a extra_install_args <<< "$BUN_INSTALL_FLAGS"
+      # shellcheck disable=SC2206
+      install_args+=($BUN_INSTALL_FLAGS)
       set +f
-      install_args+=("${extra_install_args[@]}")
     fi
 
     puts_step "Installing dependencies..."

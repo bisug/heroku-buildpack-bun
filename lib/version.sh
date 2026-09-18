@@ -5,7 +5,7 @@
 normalize_bun_version() {
   local raw="$1"
 
-  raw=$(printf "%s" "$raw" | tr -d '[:space:]')
+  raw=${raw//[[:space:]]/}
   case "$raw" in
     "") return 1 ;;
     latest|canary)

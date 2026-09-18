@@ -27,49 +27,34 @@ PKG="$BUILD_DIR/package.json"
 # Build the default_process_types block.
 PROCESS_TYPES=""
 
-# If the user provides a Procfile, Heroku will use it. We should NOT try to 
-# provide default_process_types, otherwise Heroku will merge our guessed 'web' 
+# If the user provides a Procfile, Heroku will use it. We should NOT try to
+# provide default_process_types, otherwise Heroku will merge our guessed 'web'
 # process with their Procfile (e.g., resulting in both 'web' and 'worker' running).
 if [[ ! -f "$BUILD_DIR/Procfile" ]]; then
 
+  # One jq call for all script keys (vs 4+ has_script forks before).
   if [[ -f "$PKG" ]]; then
-    # web dyno
-    if [[ "$(has_script "$PKG" "web")" == "true" ]]; then
-      PROCESS_TYPES+="  web: bun run web"$'\n'
-    elif [[ "$(has_script "$PKG" "start")" == "true" ]]; then
-      PROCESS_TYPES+="  web: bun run start"$'\n'
-    fi
-
-    # worker dyno
-    if [[ "$(has_script "$PKG" "worker")" == "true" ]]; then
-      PROCESS_TYPES+="  worker: bun run worker"$'\n'
-    fi
-
-    # release dyno
-    if [[ "$(has_script "$PKG" "release")" == "true" ]]; then
-      PROCESS_TYPES+="  release: bun run release"$'\n'
-    fi
-
-    # scheduler dyno
-    if [[ "$(has_script "$PKG" "scheduler")" == "true" ]]; then
-      PROCESS_TYPES+="  scheduler: bun run scheduler"$'\n'
-    fi
+    SCRIPTS=" $(json_script_keys "$PKG") "
+    case "$SCRIPTS" in *" web "*) PROCESS_TYPES+="  web: bun run web"$'\n' ;; esac
+    case "$SCRIPTS" in
+      *" web "*) ;;
+      *" start "*) PROCESS_TYPES+="  web: bun run start"$'\n' ;;
+    esac
+    for _pt in worker release scheduler; do
+      case "$SCRIPTS" in *" $_pt "*) PROCESS_TYPES+="  $_pt: bun run $_pt"$'\n' ;; esac
+    done
   fi
 
   # Fallback: if no process types were explicitly defined in package.json,
   # scan for common entry files and assume it's a web dyno.
   if [[ -z "$PROCESS_TYPES" ]]; then
-    WEB_CMD=""
     for entry in "index.ts" "index.js" "src/index.ts" "src/index.js" \
                  "main.ts" "main.js" "app.ts" "app.js" "server.ts" "server.js"; do
       if [[ -f "$BUILD_DIR/$entry" ]]; then
-        WEB_CMD="bun run $entry"
+        PROCESS_TYPES+="  web: bun run $entry"$'\n'
         break
       fi
     done
-    if [[ -n "$WEB_CMD" ]]; then
-      PROCESS_TYPES+="  web: $WEB_CMD"$'\n'
-    fi
   fi
 fi
 
