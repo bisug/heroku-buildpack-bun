@@ -181,7 +181,7 @@ expect_release_contains "$tmp_entry" "web: bun run index.ts" "release falls back
 source "$BP_DIR/lib/version.sh"
 
 # 23-24. normalize_bun_version accepts exact forms, rejects ranges
-for vcase in "1.3.13:v1.3.13" "v1.3.13:v1.3.13" "bun-v1.3.13:v1.3.13" "latest:latest" "canary:canary"; do
+for vcase in "1.3.13:v1.3.13" "v1.3.13:v1.3.13" "bun-v1.3.13:v1.3.13" "bun@1.3.13:v1.3.13" "bun@latest:latest" "latest:latest" "canary:canary" "*:latest" "x:latest"; do
   raw="${vcase%%:*}"
   want="${vcase##*:}"
   got=$(normalize_bun_version "$raw")
@@ -194,6 +194,19 @@ for bad in ">=1.0.0" "^1.3.0" "~1.3.0" "" "abc" "1.3"; do
     fail "normalize_bun_version should reject '$bad'"
   else
     pass "normalize_bun_version rejects '$bad'"
+  fi
+done
+
+for rcase in ">=1.0.0" "^1.3.0" "~1.3.0" "1.3" "bun@^1.0.0" "1.x" "*"; do
+  is_bun_version_range "$rcase" \
+    && pass "is_bun_version_range '$rcase' is true" \
+    || fail "is_bun_version_range '$rcase' should be true"
+done
+for nonrange in "1.3.13" "v1.3.13" "bun-v1.3.13" "bun@1.3.13" "latest" "canary" "abc" ""; do
+  if is_bun_version_range "$nonrange"; then
+    fail "is_bun_version_range '$nonrange' should be false"
+  else
+    pass "is_bun_version_range '$nonrange' is false"
   fi
 done
 
@@ -268,6 +281,36 @@ else
     pass "binary cache keyed by clean version string"
   else
     fail "binary cache missing or keyed by corrupted version string"
+  fi
+
+  # 28. Semver range in engines.bun falls back to latest with warning
+  echo '{"engines": {"bun": "^1.0.0"}, "scripts": {"start": "bun run index.js"}}' >"$tmp_app/package.json"
+  if compile_out=$("$BP_DIR/bin/compile" "$tmp_app" "$tmp_cache" "$tmp_env" 2>&1); then
+    pass "compile succeeds with semver range in engines.bun"
+  else
+    echo "$compile_out"
+    fail "compile failed on semver range in engines.bun"
+  fi
+  if echo "$compile_out" | grep -q "falling back to 'latest'"; then
+    pass "compile warned about semver range fallback to latest"
+  else
+    echo "$compile_out"
+    fail "compile did not warn about semver range fallback"
+  fi
+
+  # 29. packageManager field in package.json is used for version resolution
+  echo '{"packageManager": "bun@'"$TEST_BUN_VERSION"'", "scripts": {"start": "bun run index.js"}}' >"$tmp_app/package.json"
+  if compile_out=$("$BP_DIR/bin/compile" "$tmp_app" "$tmp_cache" "$tmp_env" 2>&1); then
+    pass "compile succeeds with packageManager in package.json"
+  else
+    echo "$compile_out"
+    fail "compile failed with packageManager in package.json"
+  fi
+  if echo "$compile_out" | grep -q "Using Bun version from package.json packageManager"; then
+    pass "compile resolved version from packageManager"
+  else
+    echo "$compile_out"
+    fail "compile did not resolve version from packageManager"
   fi
 fi
 unset BUN_BINARY_VARIANT || true
