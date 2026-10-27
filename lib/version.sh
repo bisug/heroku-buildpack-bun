@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 # lib/version.sh - Bun version normalization (sourced by bin/compile and bin/test)
-# Accepts exact versions (1.3.13, v1.3.13, bun-v1.3.13), "latest", "canary", "*".
+# Accepts exact versions (1.4.4, v1.4.4, bun-v1.4.4), "latest", "canary", "*".
 # Identifies ranges (^, ~, >=) so bin/compile can fall back to "latest".
 
 normalize_bun_version() {

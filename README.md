@@ -86,7 +86,7 @@ heroku buildpacks:set https://github.com/bisug/heroku-buildpack-bun
 Pin Bun to an exact version:
 
 ```bash
-heroku config:set BUN_VERSION=1.3.14
+heroku config:set BUN_VERSION=1.4.4
 ```
 
 Deploy:
@@ -103,9 +103,9 @@ Minimal `package.json`:
 
 ```json
 {
-  "packageManager": "bun@1.3.14",
+  "packageManager": "bun@1.4.4",
   "engines": {
-    "bun": "1.3.14"
+    "bun": "1.4.4"
   },
   "scripts": {
     "start": "bun run src/server.ts",
@@ -157,19 +157,19 @@ Version resolution priority:
 
 | Priority | Source | Example |
 |----------|--------|---------|
-| 1 | Heroku config var `BUN_VERSION` | `heroku config:set BUN_VERSION=1.3.14` |
-| 2 | `.bun-version` | `1.3.14` |
-| 3 | `package.json` `engines.bun` | `"engines": { "bun": "1.3.14" }` |
-| 4 | `package.json` `packageManager` | `"packageManager": "bun@1.3.14"` |
-| 5 | `runtime.bun.txt` | `1.3.14` |
-| 6 | `runtime.txt` | `bun-1.3.14` |
+| 1 | Heroku config var `BUN_VERSION` | `heroku config:set BUN_VERSION=1.4.4` |
+| 2 | `.bun-version` | `1.4.4` |
+| 3 | `package.json` `engines.bun` | `"engines": { "bun": "1.4.4" }` |
+| 4 | `package.json` `packageManager` | `"packageManager": "bun@1.4.4"` |
+| 5 | `runtime.bun.txt` | `1.4.4` |
+| 6 | `runtime.txt` | `bun-1.4.4` |
 | 7 | Default | `latest` |
 
 Accepted version values:
 
-- `1.3.14`
-- `v1.3.14`
-- `bun-v1.3.14`
+- `1.4.4`
+- `v1.4.4`
+- `bun-v1.4.4`
 - `latest`
 - `*` (resolves to `latest`)
 - `canary`
@@ -271,7 +271,7 @@ If no matching scripts exist, the buildpack scans for common entry files and cre
 Examples:
 
 ```bash
-heroku config:set BUN_VERSION=1.3.14
+heroku config:set BUN_VERSION=1.4.4
 heroku config:set BUN_BINARY_VARIANT=baseline
 heroku config:set BUN_INSTALL_FLAGS="--ignore-scripts"
 heroku config:set BUN_SKIP_BUILD=true
@@ -362,14 +362,14 @@ You are still responsible for auditing application dependencies, lockfiles, pack
 Add one of these files or fields:
 
 ```bash
-echo "1.3.14" > .bun-version
+echo "1.4.4" > .bun-version
 ```
 
 or:
 
 ```json
 {
-  "packageManager": "bun@1.3.14"
+  "packageManager": "bun@1.4.4"
 }
 ```
 
@@ -380,7 +380,7 @@ The buildpack requires valid version formats. Semver ranges (`^1.3.0`, `>=1.0.0`
 ```json
 {
   "engines": {
-    "bun": "1.3.14"
+    "bun": "1.4.4"
   }
 }
 ```
@@ -445,7 +445,7 @@ Confirm `bunfig.toml` references the environment variable rather than a hardcode
 Pin an exact Bun version:
 
 ```bash
-heroku config:set BUN_VERSION=1.3.14
+heroku config:set BUN_VERSION=1.4.4
 ```
 
 This avoids dependency on the GitHub releases API during version resolution.
