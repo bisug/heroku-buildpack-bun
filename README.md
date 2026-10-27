@@ -160,9 +160,10 @@ Version resolution priority:
 | 1 | Heroku config var `BUN_VERSION` | `heroku config:set BUN_VERSION=1.3.14` |
 | 2 | `.bun-version` | `1.3.14` |
 | 3 | `package.json` `engines.bun` | `"engines": { "bun": "1.3.14" }` |
-| 4 | `runtime.bun.txt` | `1.3.14` |
-| 5 | `runtime.txt` | `bun-1.3.14` |
-| 6 | Default | `latest` |
+| 4 | `package.json` `packageManager` | `"packageManager": "bun@1.3.14"` |
+| 5 | `runtime.bun.txt` | `1.3.14` |
+| 6 | `runtime.txt` | `bun-1.3.14` |
+| 7 | Default | `latest` |
 
 Accepted version values:
 
@@ -170,9 +171,10 @@ Accepted version values:
 - `v1.3.14`
 - `bun-v1.3.14`
 - `latest`
+- `*` (resolves to `latest`)
 - `canary`
 
-Only exact release versions are supported for pinned installs. Semver ranges such as `>=1.0.0`, `^1.3.0`, and `~1.3.0` are intentionally rejected during compile.
+Exact release versions are recommended for reproducible builds. Wildcards (`*`) resolve to `latest`. Semver ranges such as `>=1.0.0`, `^1.3.0`, and `~1.3.0` are not directly supported for binary download and will fall back to `latest` with a build warning.
 
 Use `runtime.txt` only when Bun is the primary runtime. Ruby, Python, Node.js, and other buildpacks may also read `runtime.txt`, so multi-buildpack apps should prefer `BUN_VERSION`, `.bun-version`, or `runtime.bun.txt`.
 
@@ -373,7 +375,7 @@ or:
 
 ### Invalid Bun version
 
-The buildpack accepts exact versions only. Replace semver ranges with an exact release:
+The buildpack requires valid version formats. Semver ranges (`^1.3.0`, `>=1.0.0`) automatically fall back to `latest` with a build warning, while unparseable strings will abort the build. For repeatable builds, specify an exact release:
 
 ```json
 {
