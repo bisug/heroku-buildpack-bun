@@ -5,7 +5,6 @@
 # heroku-buildpack-bun
 
 [![CI](https://github.com/bisug/heroku-buildpack-bun/actions/workflows/ci.yml/badge.svg)](https://github.com/bisug/heroku-buildpack-bun/actions/workflows/ci.yml)
-[![Quality](https://github.com/bisug/heroku-buildpack-bun/actions/workflows/quality.yml/badge.svg)](https://github.com/bisug/heroku-buildpack-bun/actions/workflows/quality.yml)
 [![Security](https://github.com/bisug/heroku-buildpack-bun/actions/workflows/security.yml/badge.svg)](https://github.com/bisug/heroku-buildpack-bun/actions/workflows/security.yml)
 [![CodeQL](https://github.com/bisug/heroku-buildpack-bun/actions/workflows/codeql.yml/badge.svg)](https://github.com/bisug/heroku-buildpack-bun/actions/workflows/codeql.yml)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/bisug/heroku-buildpack-bun/badge)](https://scorecard.dev/viewer/?uri=github.com/bisug/heroku-buildpack-bun)
@@ -172,6 +171,7 @@ Accepted version values:
 - `bun-v1.4.4`
 - `latest`
 - `*` (resolves to `latest`)
+- `x` or `X` (resolves to `latest`)
 - `canary`
 
 Exact release versions are recommended for reproducible builds. Wildcards (`*`) resolve to `latest`. Semver ranges such as `>=1.0.0`, `^1.3.0`, and `~1.3.0` are not directly supported for binary download and will fall back to `latest` with a build warning.
