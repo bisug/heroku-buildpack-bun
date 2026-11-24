@@ -2,8 +2,6 @@
 # bin/release <build-dir>
 # Prints YAML metadata for the Heroku runtime.
 #
-# NOTE: set -euo pipefail is safe here because all has_script calls are
-# inside [[ ]] conditionals, which are exempt from errexit.
 set -euo pipefail
 #
 # default_process_types is ONLY used when no Procfile is present.
@@ -23,8 +21,6 @@ BP_DIR=$(
   pwd
 )
 
-source "$BP_DIR/lib/json.sh"
-
 PKG="$BUILD_DIR/package.json"
 
 # Build the default_process_types block.
@@ -35,9 +31,8 @@ PROCESS_TYPES=""
 # process with their Procfile (e.g., resulting in both 'web' and 'worker' running).
 if [[ ! -f "$BUILD_DIR/Procfile" ]]; then
 
-  # One jq call for all script keys (vs 4+ has_script forks before).
   if [[ -f "$PKG" ]]; then
-    SCRIPTS=" $(json_script_keys "$PKG") "
+    SCRIPTS=" $(jq -rj '(if (.scripts? | type) == "object" then (.scripts | keys_unsorted | join(" ")) else "" end), "\n"' "$PKG" 2>/dev/null || true) "
     case "$SCRIPTS" in *" web "*) PROCESS_TYPES+="  web: bun run web"$'\n' ;; esac
     case "$SCRIPTS" in
       *" web "*) ;;
