@@ -15,11 +15,6 @@ set -euo pipefail
 #   No matching scripts  -> falls back to common entry file for web
 
 BUILD_DIR="${1:-}"
-BP_DIR=$(
-  cd "$(dirname "$0")"
-  cd ..
-  pwd
-)
 
 PKG="$BUILD_DIR/package.json"
 

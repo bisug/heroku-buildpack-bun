@@ -7,7 +7,6 @@
 [![CI](https://github.com/bisug/heroku-buildpack-bun/actions/workflows/ci.yml/badge.svg)](https://github.com/bisug/heroku-buildpack-bun/actions/workflows/ci.yml)
 [![Security](https://github.com/bisug/heroku-buildpack-bun/actions/workflows/security.yml/badge.svg)](https://github.com/bisug/heroku-buildpack-bun/actions/workflows/security.yml)
 [![CodeQL](https://github.com/bisug/heroku-buildpack-bun/actions/workflows/codeql.yml/badge.svg)](https://github.com/bisug/heroku-buildpack-bun/actions/workflows/codeql.yml)
-[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/bisug/heroku-buildpack-bun/badge)](https://scorecard.dev/viewer/?uri=github.com/bisug/heroku-buildpack-bun)
 
 Unofficial Heroku classic buildpack for running [Bun](https://bun.sh/) applications on the Heroku Common Runtime.
 

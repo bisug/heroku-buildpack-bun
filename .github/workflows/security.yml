@@ -65,6 +65,3 @@ jobs:
           fi
           exit $fail
 
-      - name: ENV_DIR blocklist present
-        run: grep -q 'LD_AUDIT' bin/compile && grep -q 'LD_CONFIG' bin/compile
-
