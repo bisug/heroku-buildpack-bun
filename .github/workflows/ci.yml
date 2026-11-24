@@ -35,13 +35,22 @@ jobs:
           curl --retry 5 --retry-all-errors -fsSL -o /tmp/shfmt "$SHFMT_RELEASE/shfmt_v3.9.0_linux_amd64"
           echo "$(curl --retry 5 --retry-all-errors -fsSL "$SHFMT_RELEASE/sha256sums.txt" | grep 'shfmt_v3.9.0_linux_amd64' | cut -d' ' -f1)  /tmp/shfmt" | sha256sum -c -
           chmod +x /tmp/shfmt
-          /tmp/shfmt -d -i 2 -ci -bn bin/compile bin/detect bin/release bin/test lib/json.sh lib/version.sh
+          /tmp/shfmt -d -i 2 -ci -bn bin/compile bin/detect bin/release bin/test lib/env.sh lib/version.sh
 
       - name: Bash syntax check
         run: |
-          for f in bin/compile bin/detect bin/release bin/test lib/json.sh lib/version.sh; do
+          for f in bin/compile bin/detect bin/release bin/test lib/env.sh lib/version.sh; do
             bash -n "$f"
           done
+
+      - name: No leftover debug or dangerous patterns
+        run: |
+          if grep -RInE 'set -x|TODO|FIXME|XXX|rm -rf /|chmod 777' bin lib; then
+            echo "::error::debug or dangerous pattern found"; exit 1
+          fi
+          if grep -RInE 'curl[^|]*\|[[:space:]]*(ba)?sh' bin lib; then
+            echo "::error::curl-pipe-shell pattern found"; exit 1
+          fi
 
       - name: Validate workflow YAML
         run: python3 -c "import glob,sys,yaml; [yaml.safe_load(open(f)) for f in glob.glob('.github/workflows/*.yml')]; print('YAML OK')"
@@ -91,6 +100,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends curl jq unzip
 
       - name: Run tests
+        env:
+          BUN_TEST_REQUIRE_NETWORK: "1"
         run: make test
 
   actionlint:
