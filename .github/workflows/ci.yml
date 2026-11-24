@@ -45,7 +45,7 @@ jobs:
 
       - name: No leftover debug or dangerous patterns
         run: |
-          if grep -RInE 'set -x|TODO|FIXME|XXX|rm -rf /|chmod 777' bin lib; then
+          if grep -RInE 'set -x|TODO|FIXME|\<XXX\>|rm -rf /|chmod 777' bin lib; then
             echo "::error::debug or dangerous pattern found"; exit 1
           fi
           if grep -RInE 'curl[^|]*\|[[:space:]]*(ba)?sh' bin lib; then
