@@ -51,12 +51,6 @@ expect_detect() { # $1=0|1 expected exit, $2=dir, $3=message
   [ "$got" = "$1" ] && pass "$3" || fail "$3 (want exit $1, got $got)"
 }
 
-expect_script() { # $1=file $2=key $3=want $4=message
-  local got
-  got=$(has_script "$1" "$2")
-  [ "$got" = "$3" ] && pass "$4" || fail "$4 (got $got)"
-}
-
 expect_release_contains() { # $1=dir $2=pattern $3=message
   local out
   out=$("$BP_DIR/bin/release" "$1")
@@ -70,111 +64,122 @@ expect_release_contains() { # $1=dir $2=pattern $3=message
 
 # 3. detect rejects a non-Bun directory
 tmp_empty=$(new_tmp)
-tmpdirs+=("tmp_empty")
 expect_detect 1 "$tmp_empty" "detect correctly rejects non-Bun directory"
 
 # 4. detect rejects a bare package.json (no Bun signals)
 tmp_pkg=$(new_tmp)
-tmpdirs+=("tmp_pkg")
 echo '{}' >"$tmp_pkg/package.json"
 expect_detect 1 "$tmp_pkg" "detect correctly rejects bare package.json"
 
 # 5. detect accepts a directory with .bun-version
 tmp_bun=$(new_tmp)
-tmpdirs+=("tmp_bun")
 echo 'v1.3.13' >"$tmp_bun/.bun-version"
 expect_detect 0 "$tmp_bun" "detect correctly accepts directory with .bun-version"
 
 # 6. detect accepts a directory with bun.lock
 tmp_lock=$(new_tmp)
-tmpdirs+=("tmp_lock")
 echo '{}' >"$tmp_lock/bun.lock"
 expect_detect 0 "$tmp_lock" "detect correctly accepts directory with bun.lock"
 
 # 7. detect accepts a directory with bun.lockb (legacy binary lockfile)
 tmp_lockb=$(new_tmp)
-tmpdirs+=("tmp_lockb")
 touch "$tmp_lockb/bun.lockb"
 expect_detect 0 "$tmp_lockb" "detect correctly accepts directory with bun.lockb"
 
 # 8. detect accepts package.json with packageManager set to bun
 tmp_pm=$(new_tmp)
-tmpdirs+=("tmp_pm")
 echo '{"packageManager": "bun@1.2.0"}' >"$tmp_pm/package.json"
 expect_detect 0 "$tmp_pm" "detect correctly accepts packageManager=bun"
 
+# 8b. detect accepts packageManager with the bun- prefix
+tmp_pm_dash=$(new_tmp)
+echo '{"packageManager": "bun-1.2.0"}' >"$tmp_pm_dash/package.json"
+expect_detect 0 "$tmp_pm_dash" "detect accepts packageManager=bun-1.2.0"
+
 # 9. detect accepts package.json with engines.bun
 tmp_engines=$(new_tmp)
-tmpdirs+=("tmp_engines")
 echo '{"engines": {"bun": ">=1.0.0"}}' >"$tmp_engines/package.json"
 expect_detect 0 "$tmp_engines" "detect correctly accepts engines.bun"
 
 # 10. detect accepts bunfig.toml
 tmp_bunfig=$(new_tmp)
-tmpdirs+=("tmp_bunfig")
 touch "$tmp_bunfig/bunfig.toml"
 expect_detect 0 "$tmp_bunfig" "detect correctly accepts bunfig.toml"
 
 # 11. detect rejects package.json with engines.node but no engines.bun
 tmp_node=$(new_tmp)
-tmpdirs+=("tmp_node")
 echo '{"engines": {"node": ">=18"}}' >"$tmp_node/package.json"
 expect_detect 1 "$tmp_node" "detect correctly rejects engines.node without engines.bun"
 
 # 12. detect rejects non-existent directory
 expect_detect 1 "/tmp/this-path-does-not-exist-$$" "detect correctly rejects non-existent directory"
 
-# Section 3: JSON helper tests
-
-source "$BP_DIR/lib/json.sh"
-
-# 13-16. has_script matrix
-tmp_json=$(new_tmp)
-tmpdirs+=("tmp_json")
-echo '{"scripts": {"start": "bun index.js", "build": "bun build"}}' >"$tmp_json/package.json"
-echo '{}' >"$tmp_json/no-scripts.json"
-echo '{"scripts": null}' >"$tmp_json/null-scripts.json"
-expect_script "$tmp_json/package.json" "start" "true" "has_script finds existing script"
-expect_script "$tmp_json/package.json" "nonexistent" "false" "has_script returns false for missing script"
-expect_script "$tmp_json/no-scripts.json" "start" "false" "has_script returns false when scripts is missing"
-expect_script "$tmp_json/null-scripts.json" "start" "false" "has_script returns false when scripts is null"
-
-# 17-18. is_invalid_json_file
-echo 'not valid json{' >"$tmp_json/bad.json"
-expect_invalid() { # $1=file $2=want $3=message
-  local got
-  got=$(is_invalid_json_file "$1")
-  [ "$got" = "$2" ] && pass "$3" || fail "$3 (got $got)"
-}
-expect_invalid "$tmp_json/bad.json" "true" "is_invalid_json_file correctly detects invalid JSON"
-expect_invalid "$tmp_json/package.json" "false" "is_invalid_json_file correctly passes valid JSON"
-
 # Section 4: Release script tests
 
 # 19. release outputs web: bun run start for start script
 tmp_rel=$(new_tmp)
-tmpdirs+=("tmp_rel")
 echo '{"scripts": {"start": "bun run index.js"}}' >"$tmp_rel/package.json"
 expect_release_contains "$tmp_rel" "web: bun run start" "release outputs 'web: bun run start' for start script"
 
 # 20. release outputs worker process type
 tmp_worker=$(new_tmp)
-tmpdirs+=("tmp_worker")
 echo '{"scripts": {"start": "bun run index.js", "worker": "bun run worker.js"}}' >"$tmp_worker/package.json"
 expect_release_contains "$tmp_worker" "worker: bun run worker" "release outputs worker process type"
 
 # 21. release prefers 'web' script over 'start'
 tmp_web=$(new_tmp)
-tmpdirs+=("tmp_web")
 echo '{"scripts": {"web": "bun serve.js", "start": "bun index.js"}}' >"$tmp_web/package.json"
 expect_release_contains "$tmp_web" "web: bun run web" "release prefers 'web' script over 'start'"
 
 # 22. release falls back to entry file when no scripts defined
 tmp_entry=$(new_tmp)
-tmpdirs+=("tmp_entry")
 echo '{}' >"$tmp_entry/package.json"
 echo 'console.log("hello")' >"$tmp_entry/index.ts"
 expect_release_contains "$tmp_entry" "web: bun run index.ts" "release falls back to index.ts entry file"
+
+# 22b. Procfile suppresses default_process_types
+tmp_proc=$(new_tmp)
+echo '{"scripts": {"start": "bun run index.js"}}' >"$tmp_proc/package.json"
+echo 'web: bun run server.js' >"$tmp_proc/Procfile"
+if release_out=$("$BP_DIR/bin/release" "$tmp_proc"); then
+  if echo "$release_out" | grep -q 'default_process_types'; then
+    fail "release adds default_process_types when a Procfile exists"
+  else
+    pass "release omits default_process_types when a Procfile exists"
+  fi
+else
+  fail "release failed with a Procfile"
+fi
+
+# 22c. release emits worker, release and scheduler process types
+tmp_types=$(new_tmp)
+echo '{"scripts": {"worker": "bun w.js", "release": "bun r.js", "scheduler": "bun s.js"}}' >"$tmp_types/package.json"
+for pt in worker release scheduler; do
+  expect_release_contains "$tmp_types" "$pt: bun run $pt" "release emits $pt process type"
+done
+
+# 22d. web script wins and start is not emitted as a second web type
+tmp_web_priority=$(new_tmp)
+echo '{"scripts": {"web": "bun serve.js", "start": "bun index.js"}}' >"$tmp_web_priority/package.json"
+release_out=$("$BP_DIR/bin/release" "$tmp_web_priority")
+if echo "$release_out" | grep -q 'web: bun run web' && ! echo "$release_out" | grep -q 'bun run start'; then
+  pass "release emits only the web script as the web process"
+else
+  echo "$release_out"
+  fail "release emitted start alongside web"
+fi
+
+# 22e. release still emits YAML when package.json is invalid
+tmp_badpkg=$(new_tmp)
+echo 'not json' >"$tmp_badpkg/package.json"
+if release_out=$("$BP_DIR/bin/release" "$tmp_badpkg" 2>&1); then
+  echo "$release_out" | grep -q '^---' \
+    && pass "release emits YAML for invalid package.json" \
+    || fail "release emitted no YAML for invalid package.json"
+else
+  echo "$release_out"
+  fail "release exited nonzero for invalid package.json"
+fi
 
 # Section 5: Compile unit tests (no network)
 
@@ -217,20 +222,59 @@ expect_grep() { # $1=pattern $2=file $3=message
 expect_grep "Ignoring runtime.txt" "$BP_DIR/bin/compile" "compile ignores foreign runtime.txt"
 expect_grep "set -f" "$BP_DIR/bin/compile" "BUN_INSTALL_FLAGS split disables globbing"
 
-# 25. ENV_DIR blocklist covers dynamic-loader variables
-for blocked in "LD_AUDIT" "LD_CONFIG" "PS4"; do
-  expect_grep "$blocked" "$BP_DIR/bin/compile" "ENV_DIR blocklist covers $blocked"
+# 24b. Invalid versions are attributed to the source that supplied them
+tmp_unit_env=$(new_tmp)
+expect_invalid_source() { # $1=label $2=app dir $3=cache dir $4...=command prefix
+  local label="$1" dir="$2" cache="$3" out
+  shift 3
+  if out=$("$@" "$BP_DIR/bin/compile" "$dir" "$cache" "$tmp_unit_env" 2>&1); then
+    echo "$out"
+    fail "compile accepted an invalid $label version"
+  fi
+  echo "$out" | grep -q "Invalid Bun version from $label" \
+    && pass "compile names $label as the invalid version source" \
+    || { echo "$out"; fail "compile did not name $label as the version source"; }
+}
+
+tmp_src_var=$(new_tmp)
+expect_invalid_source "BUN_VERSION config var" "$tmp_src_var" "$tmp_src_var" env BUN_VERSION=bad
+tmp_src_file=$(new_tmp)
+printf 'bad' >"$tmp_src_file/.bun-version"
+expect_invalid_source ".bun-version" "$tmp_src_file" "$tmp_src_file" env
+tmp_src_engines=$(new_tmp)
+echo '{"engines": {"bun": "bad"}}' >"$tmp_src_engines/package.json"
+expect_invalid_source "package.json engines.bun" "$tmp_src_engines" "$tmp_src_engines" env
+tmp_src_pm=$(new_tmp)
+echo '{"packageManager": "bun@bad"}' >"$tmp_src_pm/package.json"
+expect_invalid_source "package.json packageManager" "$tmp_src_pm" "$tmp_src_pm" env
+tmp_src_runtime=$(new_tmp)
+printf 'bad' >"$tmp_src_runtime/runtime.bun.txt"
+expect_invalid_source "runtime.bun.txt" "$tmp_src_runtime" "$tmp_src_runtime" env
+
+# 25. ENV_DIR blocklist keeps dangerous variables out of the build environment
+source "$BP_DIR/lib/env.sh"
+tmp_envdir=$(new_tmp)
+for blocked in LD_PRELOAD LD_AUDIT LD_CONFIG PS4 BASH_ENV; do
+  printf 'bad' >"$tmp_envdir/$blocked"
 done
+printf 'ok' >"$tmp_envdir/APP_FLAG"
+unset APP_FLAG LD_PRELOAD LD_AUDIT LD_CONFIG PS4 BASH_ENV || true
+export_env_dir "$tmp_envdir"
+for blocked in LD_PRELOAD LD_AUDIT LD_CONFIG PS4 BASH_ENV; do
+  [[ -z "${!blocked:-}" ]] \
+    && pass "ENV_DIR does not export $blocked" \
+    || fail "ENV_DIR exported blocked variable $blocked"
+done
+[[ "${APP_FLAG:-}" == "ok" ]] \
+  && pass "ENV_DIR exports safe variables" \
+  || fail "ENV_DIR did not export APP_FLAG"
 
 # Section 6: Compile + Release integration test
 
 # 26. compile and release integration test (end-to-end)
 tmp_app=$(new_tmp)
-tmpdirs+=("tmp_app")
 tmp_cache=$(new_tmp)
-tmpdirs+=("tmp_cache")
 tmp_env=$(new_tmp)
-tmpdirs+=("tmp_env")
 
 # The standard x64 Bun binary requires AVX2 and crashes (SIGILL) on CPUs without
 # it (e.g. some low-power Intel/AMD). Use the baseline variant there. We pin a
@@ -249,6 +293,9 @@ echo "v$TEST_BUN_VERSION" >"$tmp_app/.bun-version"
 # Skip the network-dependent compile test when we can't reach GitHub.
 if ! curl -fsSI --max-time 10 \
   "https://github.com/oven-sh/bun/releases/download/bun-v${TEST_BUN_VERSION}/bun-linux-x64.zip" >/dev/null 2>&1; then
+  if [[ "${BUN_TEST_REQUIRE_NETWORK:-}" == "1" ]]; then
+    fail "compile integration test requires network access to GitHub"
+  fi
   echo "  SKIP: compile integration test (no network access to GitHub)"
 else
   if compile_out=$("$BP_DIR/bin/compile" "$tmp_app" "$tmp_cache" "$tmp_env" 2>&1); then
@@ -259,6 +306,62 @@ else
   fi
 
   expect_release_contains "$tmp_app" "web: bun run start" "release outputs correct web process type"
+
+  # 26b. A version pin without a trailing newline must still resolve
+  printf 'v%s' "$TEST_BUN_VERSION" >"$tmp_app/.bun-version"
+  if compile_out=$("$BP_DIR/bin/compile" "$tmp_app" "$tmp_cache" "$tmp_env" 2>&1); then
+    pass "compile accepts a version pin without a trailing newline"
+  else
+    echo "$compile_out"
+    fail "compile rejected a version pin without a trailing newline"
+  fi
+
+  # 26c. A bun.lock app with an unrelated packageManager must not abort
+  printf 'v%s\n' "$TEST_BUN_VERSION" >"$tmp_cache/bun-latest-version"
+  rm -f "$tmp_app/.bun-version"
+  echo '{"packageManager": "bundle@1.0.0", "scripts": {"start": "bun run index.js"}}' >"$tmp_app/package.json"
+  if compile_out=$("$BP_DIR/bin/compile" "$tmp_app" "$tmp_cache" "$tmp_env" 2>&1); then
+    if echo "$compile_out" | grep -q "Invalid Bun version"; then
+      echo "$compile_out"
+      fail "compile treated an unrelated packageManager as a Bun version"
+    else
+      pass "compile ignores an unrelated packageManager value"
+    fi
+  else
+    echo "$compile_out"
+    fail "compile aborted on an unrelated packageManager value"
+  fi
+
+  # 26d. Cached binary must match the requested version
+  tmp_badcache=$(new_tmp)
+  case "$(uname -m)" in
+    x86_64)
+      artifact="bun-linux-x64"
+      if [[ "${BUN_BINARY_VARIANT:-}" == "baseline" ]]; then artifact="bun-linux-x64-baseline"; fi
+      ;;
+    *) artifact="bun-linux-aarch64" ;;
+  esac
+  mkdir -p "$tmp_badcache/bun-bin-cache/v$TEST_BUN_VERSION/$artifact"
+  printf '#!/bin/sh\necho v0.0.0\n' >"$tmp_badcache/bun-bin-cache/v$TEST_BUN_VERSION/$artifact/bun"
+  chmod +x "$tmp_badcache/bun-bin-cache/v$TEST_BUN_VERSION/$artifact/bun"
+  rm -f "$tmp_app/bun.lock"
+  echo '{"scripts": {"start": "bun run index.js"}}' >"$tmp_app/package.json"
+  echo "v$TEST_BUN_VERSION" >"$tmp_app/.bun-version"
+  compile_out=$("$BP_DIR/bin/compile" "$tmp_app" "$tmp_badcache" "$tmp_env" 2>&1)
+  if echo "$compile_out" | grep -q "Cached Bun binary is invalid"; then
+    pass "compile rejects a cached binary with the wrong version"
+  else
+    echo "$compile_out"
+    fail "compile accepted a cached binary with the wrong version"
+  fi
+
+  # 26e. A production build hook runs through pkg_has_script
+  echo '{"scripts": {"start": "bun run index.js", "heroku-prebuild": "touch prebuilt-marker"}}' >"$tmp_app/package.json"
+  rm -f "$tmp_app/prebuilt-marker"
+  compile_out=$("$BP_DIR/bin/compile" "$tmp_app" "$tmp_cache" "$tmp_env" 2>&1)
+  [[ -f "$tmp_app/prebuilt-marker" ]] \
+    && pass "compile runs heroku-prebuild through pkg_has_script" \
+    || fail "compile did not run heroku-prebuild"
 
   # 27. Regression: default "latest" resolution must not leak log output
   # into $BUN_VERSION via command substitution (stdout capture). This path

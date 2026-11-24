@@ -35,6 +35,7 @@ fi
 cd "$BUILD_DIR"
 
 source "$BP_DIR/lib/version.sh"
+source "$BP_DIR/lib/env.sh"
 
 # Parse package.json once: PKG_SCRIPTS="web start build", PKG_ENGINES_BUN="1.2.3",
 # PKG_PACKAGE_MANAGER="bun@1.2.3", PKG_VALID=1/0. Replaces 6+ jq forks with a single jq call on the hot path.
@@ -48,7 +49,7 @@ if [[ -f "package.json" ]]; then
     "\u0001",
     (if (.engines? | objects | has("bun")) then (.engines.bun | tostring) else "" end),
     "\u0001",
-    (if (.packageManager? | strings | startswith("bun")) then .packageManager else "" end),
+    (if (.packageManager? | strings | (startswith("bun@") or startswith("bun-"))) then .packageManager else "" end),
     "\u0001"' "package.json" 2>/dev/null) || PKG_VALID=0
   PKG_SCRIPTS=${_pkg_parsed%%$'\001'*}
   _pkg_rest=${_pkg_parsed#*$'\001'}
@@ -111,33 +112,6 @@ shell_quote() {
   printf "%q" "$1"
 }
 
-export_env_dir() {
-  local env_dir="$1"
-  local entry key filename
-
-  [[ -d "$env_dir" ]] || return 0
-
-  for entry in "$env_dir/"*; do
-    [[ -f "$entry" ]] || continue
-    filename=${entry##*/}
-    # shortcut: valid shell names only, no fork/regex (O(n) glob scan)
-    case "${filename:0:1}" in [A-Za-z_]) ;; *) continue ;; esac
-    case "$filename" in *[^A-Za-z0-9_]* | "") continue ;; esac
-    key=$filename
-
-    case "$key" in
-      PATH | HOME | IFS | GIT_DIR | CPATH | CPPATH | LD_PRELOAD | LD_AUDIT | LD_CONFIG | LIBRARY_PATH | LD_LIBRARY_PATH | BASH_ENV | ENV | SHELLOPTS | BUILDPACK_URL | SOURCE_VERSION | PS4 | GLOBIGNORE | TMPDIR | PWD | SHELL)
-        continue
-        ;;
-    esac
-
-    # NOTE: Heroku ENV_DIR files have no trailing-newline encoding, so command
-    # substitution intentionally strips trailing newlines. Values containing
-    # newlines cannot round-trip through ENV_DIR; prefer single-line values.
-    export "$key=$(cat "$entry")"
-  done
-}
-
 resolve_latest_bun_version() {
   local latest_cache_file="${CACHE_DIR:+$CACHE_DIR/bun-latest-version}"
   local cache_ttl="${BUN_LATEST_TTL_SECONDS:-3600}"
@@ -175,7 +149,9 @@ resolve_latest_bun_version() {
 
   if [[ -n "$tag" ]] && resolved=$(normalize_bun_version "$tag"); then
     if [[ -n "$latest_cache_file" ]]; then
-      printf "%s\n" "$resolved" >"$latest_cache_file"
+      tmp_latest_cache=$(mktemp "${latest_cache_file}.XXXXXX")
+      printf "%s\n" "$resolved" >"$tmp_latest_cache"
+      mv -f "$tmp_latest_cache" "$latest_cache_file"
     fi
     printf "%s\n" "$resolved"
     return 0
@@ -231,7 +207,7 @@ if [[ -n "${BUN_VERSION:-}" ]]; then
   BUN_VERSION_RAW="$BUN_VERSION"
   BUN_VERSION_SOURCE="BUN_VERSION config var"
 elif [[ -f ".bun-version" ]]; then
-  read -r BUN_VERSION_RAW <".bun-version"
+  read -r BUN_VERSION_RAW <".bun-version" || true
   BUN_VERSION_SOURCE=".bun-version"
 elif [[ -n "$PKG_ENGINES_BUN" ]]; then
   BUN_VERSION_RAW="$PKG_ENGINES_BUN"
@@ -240,10 +216,10 @@ elif [[ -n "$PKG_PACKAGE_MANAGER" ]]; then
   BUN_VERSION_RAW="$PKG_PACKAGE_MANAGER"
   BUN_VERSION_SOURCE="package.json packageManager"
 elif [[ -f "runtime.bun.txt" ]]; then
-  read -r BUN_VERSION_RAW <"runtime.bun.txt"
+  read -r BUN_VERSION_RAW <"runtime.bun.txt" || true
   BUN_VERSION_SOURCE="runtime.bun.txt"
 elif [[ -f "runtime.txt" ]]; then
-  read -r runtime_value <"runtime.txt"
+  read -r runtime_value <"runtime.txt" || true
   runtime_value=${runtime_value//[[:space:]]/}
   if [[ -z "$runtime_value" ]]; then
     puts_warn "Ignoring empty runtime.txt (belongs to another buildpack?)."
@@ -384,7 +360,7 @@ download_bun() {
     exit 1
   fi
 
-  unzip -qo "$bun_zip" -d "$bun_extract_dir"
+  unzip -qo "$bun_zip" "$BUN_ARTIFACT_BASE/bun" -d "$bun_extract_dir"
 
   if [[ ! -f "$bun_extract_dir/$BUN_ARTIFACT_BASE/bun" ]]; then
     puts_warn "Unexpected archive structure; could not find bun binary."
@@ -431,7 +407,9 @@ if [[ "$BUN_CACHEABLE_BINARY" == "true" && -n "$BINARY_CACHE_DIR" && -x "$BINARY
   chmod +x "$BUN_INSTALL/bin/bun"
   restored_binary="true"
 
-  if ! "$BUN_INSTALL/bin/bun" --version >/dev/null 2>&1; then
+  cached_version=$("$BUN_INSTALL/bin/bun" --version 2>/dev/null || true)
+  cached_version=${cached_version#v}
+  if [[ "$cached_version" != "${BUN_VERSION#v}" ]]; then
     puts_warn "Cached Bun binary is invalid. Re-downloading."
     rm -rf "$BINARY_CACHE_DIR"
     rm -f "$BUN_INSTALL/bin/bun"
@@ -445,7 +423,10 @@ if [[ "$restored_binary" != "true" ]]; then
   if [[ "$BUN_CACHEABLE_BINARY" == "true" && -n "$BINARY_CACHE_DIR" ]]; then
     prune_binary_cache
     mkdir -p "$BINARY_CACHE_DIR"
-    cp "$BUN_INSTALL/bin/bun" "$BINARY_CACHE_DIR/bun"
+    tmp_cached_bun=$(mktemp "$BINARY_CACHE_DIR/bun.XXXXXX")
+    cp "$BUN_INSTALL/bin/bun" "$tmp_cached_bun"
+    chmod +x "$tmp_cached_bun"
+    mv -f "$tmp_cached_bun" "$BINARY_CACHE_DIR/bun"
   fi
 fi
 

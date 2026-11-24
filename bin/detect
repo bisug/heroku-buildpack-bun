@@ -26,7 +26,7 @@ if [ -f "$BUILD_DIR/package.json" ]; then
 
   if command -v jq >/dev/null 2>&1; then
     # packageManager field explicitly set to bun (e.g. "bun@1.2.0")
-    if jq -e '.packageManager? | strings | startswith("bun@")' "$BUILD_DIR/package.json" >/dev/null 2>&1; then
+    if jq -e '.packageManager? | strings | (startswith("bun@") or startswith("bun-"))' "$BUILD_DIR/package.json" >/dev/null 2>&1; then
       echo "Bun"
       exit 0
     fi
@@ -37,7 +37,7 @@ if [ -f "$BUILD_DIR/package.json" ]; then
       exit 0
     fi
   else
-    if grep -q '"packageManager"[[:space:]]*:[[:space:]]*"bun@' \
+    if grep -q '"packageManager"[[:space:]]*:[[:space:]]*"bun[-@]' \
       "$BUILD_DIR/package.json" 2>/dev/null; then
       echo "Bun"
       exit 0
