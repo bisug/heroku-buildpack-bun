@@ -23,6 +23,24 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+          fetch-depth: 0
+
+      - name: Verify tagged commit passed CI on main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git fetch origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::Tagged commit is not contained in main"
+            exit 1
+          fi
+          conclusion=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/check-runs" \
+            --jq '[.check_runs[] | select(.name == "Buildpack Tests") | .conclusion] |
+                  if length > 0 and all(. == "success") then "success" else "missing" end')
+          if [[ "$conclusion" != "success" ]]; then
+            echo "::error::Tagged commit has no successful Buildpack Tests check"
+            exit 1
+          fi
 
       - name: Build buildpack tarball
         run: |
@@ -30,7 +48,6 @@ jobs:
           git archive --format=tar.gz --prefix=heroku-buildpack-bun/ \
             -o "dist/heroku-buildpack-bun-${GITHUB_REF_NAME}.tar.gz" HEAD
           tar -tzf "dist/heroku-buildpack-bun-${GITHUB_REF_NAME}.tar.gz" > /dev/null
-          echo "asset=dist/heroku-buildpack-bun-${GITHUB_REF_NAME}.tar.gz" >> "$GITHUB_ENV"
 
       - name: Generate SLSA build provenance attestation
         id: attest
@@ -45,7 +62,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" \
-            --title "heroku-buildpack-bun ${GITHUB_REF_NAME}" \
-            --generate-notes --verify-tag \
-            dist/*.tar.gz dist/*.intoto.jsonl
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "Release ${GITHUB_REF_NAME} already exists; skipping create."
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --title "heroku-buildpack-bun ${GITHUB_REF_NAME}" \
+              --generate-notes --verify-tag \
+              dist/*.tar.gz dist/*.intoto.jsonl
+          fi
