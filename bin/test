@@ -233,7 +233,10 @@ expect_invalid_source() { # $1=label $2=app dir $3=cache dir $4...=command prefi
   fi
   echo "$out" | grep -q "Invalid Bun version from $label" \
     && pass "compile names $label as the invalid version source" \
-    || { echo "$out"; fail "compile did not name $label as the version source"; }
+    || {
+      echo "$out"
+      fail "compile did not name $label as the version source"
+    }
 }
 
 tmp_src_var=$(new_tmp)
